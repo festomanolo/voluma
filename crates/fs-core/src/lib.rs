@@ -14,6 +14,18 @@ pub enum FsError {
     IsADirectory(String),
     #[error("unsupported: {0}")]
     Unsupported(&'static str),
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
+    #[error("invalid name: {0}")]
+    InvalidName(String),
+    #[error("directory not empty: {0}")]
+    NotEmpty(String),
+    #[error("no space left on volume")]
+    NoSpace,
+    #[error("write refused: {0}")]
+    Refused(&'static str),
+    #[error("source read failed: {0}")]
+    Source(String),
     #[error("corrupt filesystem: {0}")]
     Corrupt(&'static str),
     #[error(transparent)]
@@ -66,6 +78,27 @@ pub trait Filesystem: Send + Sync {
     fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>>;
     /// Streaming positional read; returns bytes read (0 at EOF).
     fn read_at(&self, entry: &DirEntry, offset: u64, buf: &mut [u8]) -> Result<usize>;
+
+    // ---- mutation: drivers that cannot do these must say so, never emulate ----
+    fn create_dir(&self, _path: &str) -> Result<DirEntry> { Err(FsError::Unsupported("create_dir")) }
+    /// Streams `src` into a file. Fails with `AlreadyExists` unless `overwrite`.
+    /// On any failure partway, allocated space is released.
+    fn write_file(&self, _path: &str, _src: &mut dyn std::io::Read, _overwrite: bool) -> Result<DirEntry> {
+        Err(FsError::Unsupported("write_file"))
+    }
+    /// Removes a file or an EMPTY directory.
+    fn remove(&self, _path: &str) -> Result<()> { Err(FsError::Unsupported("remove")) }
+    fn rename(&self, _from: &str, _to: &str) -> Result<()> { Err(FsError::Unsupported("rename")) }
+}
+
+/// Validates a single path component for FAT-family filesystems.
+pub fn validate_fat_name(name: &str) -> Result<()> {
+    let bad = |m: &str| Err(FsError::InvalidName(format!("{name:?}: {m}")));
+    if name.is_empty() || name == "." || name == ".." { return bad("reserved"); }
+    if name.encode_utf16().count() > 255 { return bad("longer than 255 characters"); }
+    if name.ends_with('.') || name.ends_with(' ') { return bad("trailing dot or space"); }
+    if name.chars().any(|c| (c as u32) < 0x20 || "\\/:*?\"<>|".contains(c)) { return bad("contains a forbidden character"); }
+    Ok(())
 }
 
 /// Split a path into components, rejecting `..` escapes. Accepts `/a/b`, `a/b`, `""`.
@@ -89,6 +122,15 @@ mod tests {
         assert_eq!(normalize_path("/a//b/./c").unwrap(), ["a", "b", "c"]);
         assert_eq!(normalize_path("").unwrap(), Vec::<&str>::new());
         assert_eq!(normalize_path("a/b/..").unwrap(), ["a"]);
+    }
+    #[test]
+    fn name_validation() {
+        assert!(validate_fat_name("ok name.txt").is_ok());
+        assert!(validate_fat_name("héllo-日本語.txt").is_ok());
+        for bad in ["", ".", "..", "a/b", "a:b", "x?", "trail.", "trail ", "a\u{1}b", "q\"q"] {
+            assert!(validate_fat_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_fat_name(&"a".repeat(256)).is_err());
     }
     #[test]
     fn rejects_escape() { assert!(normalize_path("/../etc").is_err()); }

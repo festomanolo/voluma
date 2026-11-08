@@ -114,7 +114,7 @@ struct ImageInspectorView: View {
         }
     }
 
-    func canBrowse(_ kind: String) -> Bool { ["fat12", "fat16", "fat32"].contains(kind) }
+    func canBrowse(_ kind: String) -> Bool { ["fat12", "fat16", "fat32", "ex_fat"].contains(kind) }
 
     func row(_ title: String, _ fs: String, _ label: String?, extra: String? = nil, browse: (() -> Void)? = nil) -> some View {
         HStack {

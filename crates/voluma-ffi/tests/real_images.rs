@@ -28,6 +28,8 @@ fn detects_fat32_generated_by_macos() {
 fn list_and_export_roundtrip() {
     let Some((d, img)) = fixture() else { return };
     let v = json(voluma_ffi::list_directory_json(&img, -1, "/docs"));
+    assert_eq!(v["ok"]["driver_supports_write"], true, "{v}");
+    assert_eq!(v["ok"]["capabilities"]["write"], false, "listing itself must be read-only: {v}");
     assert!(v["ok"]["entries"].as_array().unwrap().iter().any(|e| e["name"] == "nested"), "{v}");
 
     let dest = d.path().join("out.bin");
@@ -41,4 +43,21 @@ fn list_and_export_roundtrip() {
     // Directories can't be exported as files.
     let dir = json(voluma_ffi::export_file_json(&img, -1, "/docs", d.path().join("x").to_str().unwrap()));
     assert!(dir.get("error").is_some());
+}
+
+#[test]
+fn mutate_requires_driver_support_and_roundtrips() {
+    let Some((d, img)) = fixture() else { return };
+    let src = d.path().join("src.txt");
+    std::fs::write(&src, b"imported via ffi").unwrap();
+    let s = src.to_str().unwrap();
+    assert_eq!(json(voluma_ffi::mutate_json(&img, -1, "mkdir", "/made", "", false))["ok"]["done"], "mkdir");
+    assert_eq!(json(voluma_ffi::mutate_json(&img, -1, "import", "/made/in.txt", s, false))["ok"]["bytes"], 16);
+    assert!(json(voluma_ffi::mutate_json(&img, -1, "import", "/made/in.txt", s, false)).get("error").is_some(), "no silent overwrite");
+    assert!(json(voluma_ffi::mutate_json(&img, -1, "rename", "/made/in.txt", "/made/out.txt", false)).get("ok").is_some());
+    let l = json(voluma_ffi::list_directory_json(&img, -1, "/made"));
+    assert_eq!(l["ok"]["entries"][0]["name"], "out.txt", "{l}");
+    assert!(json(voluma_ffi::mutate_json(&img, -1, "delete", "/made", "", false)).get("error").is_some(), "non-empty dir");
+    assert!(json(voluma_ffi::mutate_json(&img, -1, "delete", "/made/out.txt", "", false)).get("ok").is_some());
+    assert!(json(voluma_ffi::mutate_json(&img, -1, "bogus", "/", "", false)).get("error").is_some());
 }

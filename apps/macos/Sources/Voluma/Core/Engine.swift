@@ -48,6 +48,11 @@ enum Engine {
         try call(voluma_list_directory(image, Int32(part), path), as: Listing.self)
     }
 
+    @discardableResult
+    static func mutate(image: String, part: Int, op: String, a: String, b: String = "", overwrite: Bool = false) throws -> MutateResult {
+        try call(voluma_mutate(image, Int32(part), op, a, b, overwrite ? 1 : 0), as: MutateResult.self)
+    }
+
     static func exportFile(image: String, part: Int, path: String, dest: String) throws -> ExportResult {
         try call(voluma_export_file(image, Int32(part), path, dest), as: ExportResult.self)
     }
@@ -60,9 +65,11 @@ struct Listing: Decodable {
         var id: String { name }
         var isDir: Bool { kind == "directory" }
     }
-    let filesystem: String; let label: String?; let entries: [Entry]
+    struct Caps: Decodable { let read: Bool; let write: Bool }
+    let filesystem: String; let label: String?; let entries: [Entry]; let capabilities: Caps; let driver_supports_write: Bool
 }
 
+struct MutateResult: Decodable { let done: String; let bytes: UInt64? }
 struct ExportResult: Decodable { let bytes: UInt64; let sha256: String }
 
 private struct Env<U: Decodable>: Decodable { let ok: U?; let error: String? }

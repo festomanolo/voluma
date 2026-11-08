@@ -1,9 +1,12 @@
-//! FAT12/16/32 driver. READ-ONLY. Every on-disk value is validated; malformed
+//! FAT12/16/32 driver. Writes only on a device opened read-write AND a cleanly
+//! unmounted volume. Every on-disk value is validated; malformed
 //! images yield `FsError::Corrupt`, never out-of-range access or endless loops.
 
 use block_device::BlockDevice;
 use fs_core::{normalize_path, Capabilities, DirEntry, EntryKind, Filesystem, FsError, Result};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+mod write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FatKind { Fat12, Fat16, Fat32 }
@@ -22,6 +25,11 @@ pub struct FatFs {
     cluster_count: u32,
     root_cluster: u32,    // FAT32
     label: Option<String>,
+    nfats: u64,
+    fat_bytes: u64,       // size of one FAT copy
+    fsinfo_sector: u64,   // FAT32 only, 0 if absent
+    /// Serialises all mutation (and the allocation hint).
+    wlock: Mutex<u32>,
 }
 
 fn le16(b: &[u8], o: usize) -> u64 { u16::from_le_bytes([b[o], b[o + 1]]) as u64 }
@@ -63,6 +71,9 @@ impl FatFs {
             data_start: meta * bps,
             cluster_count: clusters as u32,
             root_cluster, label,
+            nfats, fat_bytes: fat_sz * bps,
+            fsinfo_sector: if kind == FatKind::Fat32 { le16(&s, 48) } else { 0 },
+            wlock: Mutex::new(2),
         };
         // A volume-label entry in the root directory overrides the BPB label.
         if let Ok(root) = fs.dir_bytes(DirLoc::Root) {
@@ -147,16 +158,21 @@ impl FatFs {
     }
 
     fn parse_dir(&self, raw: &[u8]) -> Vec<DirEntry> {
+        self.parse_dir_located(raw).into_iter().map(|l| l.entry).collect()
+    }
+
+    fn parse_dir_located(&self, raw: &[u8]) -> Vec<Located> {
         let mut out = Vec::new();
+        let mut first_slot: Option<usize> = None;
         let mut lfn: Vec<(u8, [u16; 13])> = Vec::new();
         let mut lfn_sum: Option<u8> = None;
-        for e in raw.chunks_exact(32) {
+        for (slot, e) in raw.chunks_exact(32).enumerate() {
             if e[0] == 0 { break; }
-            if e[0] == 0xE5 { lfn.clear(); lfn_sum = None; continue; }
+            if e[0] == 0xE5 { lfn.clear(); lfn_sum = None; first_slot = None; continue; }
             let attr = e[11];
             if attr & 0x3F == 0x0F {
                 let seq = e[0];
-                if seq & 0x40 != 0 { lfn.clear(); lfn_sum = Some(e[13]); }
+                if seq & 0x40 != 0 { lfn.clear(); lfn_sum = Some(e[13]); first_slot = Some(slot); }
                 let mut ch = [0u16; 13];
                 for (i, o) in [1usize, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30].iter().enumerate() {
                     ch[i] = u16::from_le_bytes([e[*o], e[*o + 1]]);
@@ -164,13 +180,14 @@ impl FatFs {
                 lfn.push((seq & 0x3F, ch));
                 continue;
             }
-            if attr & 0x08 != 0 { lfn.clear(); continue; } // volume label
+            if attr & 0x08 != 0 { lfn.clear(); first_slot = None; continue; } // volume label
             let mut short = [0u8; 11];
             short.copy_from_slice(&e[0..11]);
             if short[0] == 0x05 { short[0] = 0xE5; }
             let name_bytes = &short[0..8];
             let ext_bytes = &short[8..11];
-            if name_bytes.starts_with(b". ") || name_bytes.starts_with(b".. ") { lfn.clear(); continue; }
+            if name_bytes.starts_with(b". ") || name_bytes.starts_with(b".. ") { lfn.clear(); first_slot = None; continue; }
+            let used_lfn = !lfn.is_empty() && lfn_sum == Some(short_checksum(&e[0..11]));
 
             let name = if !lfn.is_empty() && lfn_sum == Some(short_checksum(&e[0..11])) {
                 lfn.sort_by_key(|(s, _)| *s);
@@ -185,11 +202,13 @@ impl FatFs {
                 if x.is_empty() { b } else { format!("{b}.{x}") }
             };
             lfn.clear(); lfn_sum = None;
+            let start = if used_lfn { first_slot.unwrap_or(slot) } else { slot };
+            first_slot = None;
 
             let hi = if self.kind == FatKind::Fat32 { le16(e, 20) } else { 0 };
             let first = ((hi << 16) | le16(e, 26)) as u32;
             let is_dir = attr & 0x10 != 0;
-            out.push(DirEntry {
+            out.push(Located { first_slot: start, short_slot: slot, short: e[0..11].try_into().unwrap(), entry: DirEntry {
                 name,
                 kind: if is_dir { EntryKind::Directory } else { EntryKind::File },
                 size: if is_dir { 0 } else { le32(e, 28) },
@@ -198,7 +217,7 @@ impl FatFs {
                 hidden: attr & 0x02 != 0,
                 read_only: attr & 0x01 != 0,
                 inode: first as u64,
-            });
+            }});
         }
         out
     }
@@ -208,8 +227,11 @@ impl FatFs {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DirLoc { Root, Cluster(u32) }
+
+/// A parsed entry plus where its directory-entry set lives.
+struct Located { entry: DirEntry, first_slot: usize, short_slot: usize, short: [u8; 11] }
 
 fn ascii_trim(b: &[u8], lower: bool) -> String {
     let s: String = b.iter().map(|&c| c as char).collect::<String>().trim_end().to_string();
@@ -241,7 +263,15 @@ impl Filesystem for FatFs {
         match self.kind { FatKind::Fat12 => "FAT12", FatKind::Fat16 => "FAT16", FatKind::Fat32 => "FAT32" }
     }
     fn label(&self) -> Option<String> { self.label.clone() }
-    fn capabilities(&self) -> Capabilities { Capabilities::READ_ONLY }
+    fn capabilities(&self) -> Capabilities {
+        if self.dev.is_read_only() { return Capabilities::READ_ONLY; }
+        Capabilities { read: true, write: true, create: true, delete: true, rename: true,
+            permissions: false, symbolic_links: false, extended_attributes: false }
+    }
+    fn create_dir(&self, path: &str) -> Result<DirEntry> { self.w_create_dir(path) }
+    fn write_file(&self, path: &str, src: &mut dyn std::io::Read, overwrite: bool) -> Result<DirEntry> { self.w_write_file(path, src, overwrite) }
+    fn remove(&self, path: &str) -> Result<()> { self.w_remove(path) }
+    fn rename(&self, from: &str, to: &str) -> Result<()> { self.w_rename(from, to) }
 
     fn read_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         let comps = normalize_path(path)?;

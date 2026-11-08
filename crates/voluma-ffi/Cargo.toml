@@ -13,6 +13,7 @@ partition-manager = { path = "../partition-manager" }
 filesystem-detection = { path = "../filesystem-detection" }
 fs-core = { path = "../fs-core" }
 fs-fat = { path = "../fs-fat" }
+fs-exfat = { path = "../fs-exfat" }
 sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true

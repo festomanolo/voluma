@@ -7,4 +7,7 @@ void voluma_free_string(char *s);
 char *voluma_list_directory(const char *image, int part, const char *path);
 // Streams a file out of the image into a NEW host file (fails if dest exists).
 char *voluma_export_file(const char *image, int part, const char *fs_path, const char *dest);
+// Mutation; opens the image read-write for this one call. op: mkdir|delete|rename|import.
+// a = target path; b = new path (rename) or host source file (import).
+char *voluma_mutate(const char *image, int part, const char *op, const char *a, const char *b, int overwrite);
 #endif

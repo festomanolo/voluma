@@ -1,0 +1,13 @@
+[package]
+name = "fs-exfat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+block-device = { path = "../block-device" }
+fs-core = { path = "../fs-core" }
+
+[dev-dependencies]
+tempfile = "3"
+sha2 = "0.10"

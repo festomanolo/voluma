@@ -69,8 +69,11 @@ pub unsafe extern "C" fn voluma_free_string(s: *mut c_char) {
     if !s.is_null() { drop(CString::from_raw(s)); }
 }
 
-fn open_fs(image: &str, part: i32) -> Result<Box<dyn Filesystem>, String> {
-    let dev: Arc<dyn BlockDevice> = Arc::new(ImageDevice::open_read_only(image).map_err(|e| e.to_string())?);
+/// Writes are never implicit: `writable` must be requested by the caller for this call only,
+/// and the drivers additionally refuse dirty volumes.
+fn open_fs(image: &str, part: i32, writable: bool) -> Result<Box<dyn Filesystem>, String> {
+    let dev: Arc<dyn BlockDevice> = Arc::new(if writable { ImageDevice::open_read_write(image) } else { ImageDevice::open_read_only(image) }
+        .map_err(|e| e.to_string())?);
     let vol: Arc<dyn BlockDevice> = if part < 0 { dev } else {
         let t = partition_manager::read_partition_table(dev.as_ref()).map_err(|e| e.to_string())?;
         let p = t.partitions.iter().find(|p| p.index as i32 == part).ok_or("no such partition")?;
@@ -80,6 +83,7 @@ fn open_fs(image: &str, part: i32) -> Result<Box<dyn Filesystem>, String> {
     match d.kind {
         FsKind::Fat12 | FsKind::Fat16 | FsKind::Fat32 =>
             Ok(Box::new(fs_fat::FatFs::open(vol).map_err(|e| e.to_string())?)),
+        FsKind::ExFat => Ok(Box::new(fs_exfat::ExFatFs::open(vol).map_err(|e| e.to_string())?)),
         k => Err(format!("No driver yet for {k:?}; this filesystem is detected but cannot be browsed")),
     }
 }
@@ -94,13 +98,15 @@ fn wrap<T: Serialize>(r: Result<T, String>) -> String {
 /// `part < 0` browses the whole image (no partition table).
 pub fn list_directory_json(image: &str, part: i32, path: &str) -> String {
     wrap((|| {
-        let fs = open_fs(image, part)?;
+        let fs = open_fs(image, part, false)?;
         let mut entries = fs.read_dir(path).map_err(|e| e.to_string())?;
         entries.sort_by(|a, b| (a.kind != EntryKind::Directory, a.name.to_lowercase())
             .cmp(&(b.kind != EntryKind::Directory, b.name.to_lowercase())));
         Ok(serde_json::json!({
             "filesystem": fs.name(), "label": fs.label(),
             "capabilities": fs.capabilities(), "entries": entries,
+            // Whether the driver CAN write (the listing itself is opened read-only).
+            "driver_supports_write": matches!(fs.name(), "FAT12" | "FAT16" | "FAT32" | "exFAT"),
         }))
     })())
 }
@@ -108,7 +114,7 @@ pub fn list_directory_json(image: &str, part: i32, path: &str) -> String {
 /// Streams a file out of the image into a NEW host file (never overwrites).
 pub fn export_file_json(image: &str, part: i32, fs_path: &str, dest: &str) -> String {
     wrap((|| {
-        let fs = open_fs(image, part)?;
+        let fs = open_fs(image, part, false)?;
         let e = fs.stat(fs_path).map_err(|e| e.to_string())?;
         if e.kind == EntryKind::Directory { return Err("cannot export a directory as a file".to_string()); }
         let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(dest)
@@ -128,6 +134,27 @@ pub fn export_file_json(image: &str, part: i32, fs_path: &str, dest: &str) -> St
     })())
 }
 
+/// One mutation, always on an explicitly writable open. `op`: "mkdir" | "delete" | "rename" | "import".
+/// `a` is the target path; `b` is the new path (rename) or the host source file (import).
+pub fn mutate_json(image: &str, part: i32, op: &str, a: &str, b: &str, overwrite: bool) -> String {
+    wrap((|| {
+        let fs = open_fs(image, part, true)?;
+        if !fs.capabilities().write { return Err("this filesystem driver is read-only".to_string()); }
+        let m = |e: fs_core::FsError| e.to_string();
+        match op {
+            "mkdir" => { fs.create_dir(a).map_err(m)?; Ok(serde_json::json!({ "done": op })) }
+            "delete" => { fs.remove(a).map_err(m)?; Ok(serde_json::json!({ "done": op })) }
+            "rename" => { fs.rename(a, b).map_err(m)?; Ok(serde_json::json!({ "done": op })) }
+            "import" => {
+                let mut f = std::fs::File::open(b).map_err(|e| format!("cannot open source: {e}"))?;
+                let e = fs.write_file(a, &mut f, overwrite).map_err(m)?;
+                Ok(serde_json::json!({ "done": op, "bytes": e.size }))
+            }
+            _ => Err(format!("unknown operation {op}")),
+        }
+    })())
+}
+
 unsafe fn cstr<'a>(p: *const c_char) -> Option<&'a str> { if p.is_null() { None } else { CStr::from_ptr(p).to_str().ok() } }
 fn out(s: String) -> *mut c_char { CString::new(s).unwrap().into_raw() }
 const BAD_ARG: &str = r#"{"error":"invalid argument"}"#;
@@ -137,6 +164,16 @@ const BAD_ARG: &str = r#"{"error":"invalid argument"}"#;
 #[no_mangle]
 pub unsafe extern "C" fn voluma_list_directory(image: *const c_char, part: i32, path: *const c_char) -> *mut c_char {
     match (cstr(image), cstr(path)) { (Some(i), Some(p)) => out(list_directory_json(i, part, p)), _ => out(BAD_ARG.into()) }
+}
+
+/// # Safety
+/// As `voluma_list_directory`. Opens the image read-write for this single call.
+#[no_mangle]
+pub unsafe extern "C" fn voluma_mutate(image: *const c_char, part: i32, op: *const c_char, a: *const c_char, b: *const c_char, overwrite: i32) -> *mut c_char {
+    match (cstr(image), cstr(op), cstr(a), cstr(b)) {
+        (Some(i), Some(o), Some(a), Some(b)) => out(mutate_json(i, part, o, a, b, overwrite != 0)),
+        _ => out(BAD_ARG.into()),
+    }
 }
 
 /// # Safety
