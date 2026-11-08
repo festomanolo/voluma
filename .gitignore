@@ -1,0 +1,8 @@
+target/
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+.DS_Store
+*.img
+!tests/fixtures/*.img

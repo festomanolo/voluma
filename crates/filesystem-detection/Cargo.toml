@@ -1,0 +1,12 @@
+[package]
+name = "filesystem-detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+block-device = { path = "../block-device" }
+serde.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

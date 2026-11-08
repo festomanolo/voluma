@@ -1,0 +1,15 @@
+[package]
+name = "voluma-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+block-device = { path = "../block-device" }
+partition-manager = { path = "../partition-manager" }
+filesystem-detection = { path = "../filesystem-detection" }
+serde.workspace = true
+serde_json.workspace = true

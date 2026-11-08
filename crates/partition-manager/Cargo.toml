@@ -1,0 +1,13 @@
+[package]
+name = "partition-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+block-device = { path = "../block-device" }
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
