@@ -11,5 +11,11 @@ crate-type = ["staticlib", "rlib"]
 block-device = { path = "../block-device" }
 partition-manager = { path = "../partition-manager" }
 filesystem-detection = { path = "../filesystem-detection" }
+fs-core = { path = "../fs-core" }
+fs-fat = { path = "../fs-fat" }
+sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

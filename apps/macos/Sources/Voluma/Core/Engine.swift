@@ -34,4 +34,35 @@ enum Engine {
         guard let ok = env.ok else { throw EngineError.decode }
         return ok
     }
+
+    private static func call<T: Decodable>(_ raw: UnsafeMutablePointer<CChar>?, as: T.Type) throws -> T {
+        guard let raw else { throw EngineError.decode }
+        defer { voluma_free_string(raw) }
+        guard let env = try? JSONDecoder().decode(Env<T>.self, from: Data(String(cString: raw).utf8)) else { throw EngineError.decode }
+        if let e = env.error { throw EngineError.engine(e) }
+        guard let ok = env.ok else { throw EngineError.decode }
+        return ok
+    }
+
+    static func listDirectory(image: String, part: Int, path: String) throws -> Listing {
+        try call(voluma_list_directory(image, Int32(part), path), as: Listing.self)
+    }
+
+    static func exportFile(image: String, part: Int, path: String, dest: String) throws -> ExportResult {
+        try call(voluma_export_file(image, Int32(part), path, dest), as: ExportResult.self)
+    }
 }
+
+struct Listing: Decodable {
+    struct Entry: Decodable, Identifiable, Hashable {
+        let name: String; let kind: String; let size: UInt64
+        let modified: Int64?; let hidden: Bool
+        var id: String { name }
+        var isDir: Bool { kind == "directory" }
+    }
+    let filesystem: String; let label: String?; let entries: [Entry]
+}
+
+struct ExportResult: Decodable { let bytes: UInt64; let sha256: String }
+
+private struct Env<U: Decodable>: Decodable { let ok: U?; let error: String? }

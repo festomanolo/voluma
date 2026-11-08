@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var report: ImageReport?
     @State private var errorText: String?
     @State private var importing = false
+    @State private var browse: BrowseTarget?
 
     var body: some View {
         NavigationSplitView {
@@ -22,7 +23,9 @@ struct ContentView: View {
             Group {
                 switch section ?? .dashboard {
                 case .dashboard: DashboardView()
-                case .images: ImageInspectorView(report: report, error: errorText) { importing = true }
+                case .images:
+                    if let t = browse { BrowserView(target: t) { browse = nil } }
+                    else { ImageInspectorView(report: report, error: errorText, open: { importing = true }, browse: { browse = $0 }) }
                 }
             }
             .navigationTitle((section ?? .dashboard).rawValue)
@@ -75,7 +78,7 @@ struct DashboardView: View {
 }
 
 struct ImageInspectorView: View {
-    let report: ImageReport?; let error: String?; let open: () -> Void
+    let report: ImageReport?; let error: String?; let open: () -> Void; let browse: (BrowseTarget) -> Void
     var body: some View {
         if let error {
             ContentUnavailableView("Couldn't read image", systemImage: "exclamationmark.triangle", description: Text(error))
@@ -88,13 +91,15 @@ struct ImageInspectorView: View {
                             .foregroundStyle(.secondary)
                     }
                     if let fs = r.whole_disk_filesystem {
-                        row("Filesystem (no partition table)", fs.detail ?? fs.kind, fs.label)
+                        row("Filesystem (no partition table)", fs.detail ?? fs.kind, fs.label,
+                            browse: canBrowse(fs.kind) ? { browse(.init(image: r.path, part: -1, title: fs.label ?? "Volume")) } : nil)
                     }
                     ForEach(r.partitions) { p in
                         row("Partition \(p.index) · \(p.type_name ?? p.type_id)",
                             p.filesystem.detail ?? p.filesystem.kind,
                             p.filesystem.label ?? p.name,
-                            extra: "\(formatBytes(Int64(p.length))) @ offset \(p.offset)")
+                            extra: "\(formatBytes(Int64(p.length))) @ offset \(p.offset)",
+                            browse: canBrowse(p.filesystem.kind) ? { browse(.init(image: r.path, part: p.index, title: p.filesystem.label ?? p.name ?? "Partition \(p.index)")) } : nil)
                     }
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -109,7 +114,9 @@ struct ImageInspectorView: View {
         }
     }
 
-    func row(_ title: String, _ fs: String, _ label: String?, extra: String? = nil) -> some View {
+    func canBrowse(_ kind: String) -> Bool { ["fat12", "fat16", "fat32"].contains(kind) }
+
+    func row(_ title: String, _ fs: String, _ label: String?, extra: String? = nil, browse: (() -> Void)? = nil) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
@@ -120,6 +127,8 @@ struct ImageInspectorView: View {
             Text(fs).font(.caption.monospaced())
                 .padding(.horizontal, 7).padding(.vertical, 2)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            if let browse { Button("Browse", action: browse) }
+            else { Text("No driver yet").font(.caption).foregroundStyle(.tertiary) }
         }
         .padding(14).background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
     }
