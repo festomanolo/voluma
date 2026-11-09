@@ -1,0 +1,2 @@
+[console_scripts]
+voluma = nolo_voluma.cli:main
