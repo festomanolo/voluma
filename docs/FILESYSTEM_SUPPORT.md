@@ -22,5 +22,19 @@ Supported: entry-set checksum validation, NoFatChain and FAT-chained files, allo
 Safety: refuses writes if VolumeDirty or MediaFailure is set.
 Limitations: new data always uses FAT chains (never contiguous allocation) so large files may fragment; backup boot region and PercentInUse are not maintained (PercentInUse set to "unavailable"); TexFAT / multiple FATs unsupported; no ACLs; `valid_data_length < data_length` files report the valid length; rename not atomic (same ordering note as FAT).
 
+## HFS+ / HFSX (`fs-hfsplus`, read-only)
+Supported: catalog and extents-overflow B-trees, files with >8 extents, hard links (resolved via the private metadata directory), case-insensitive (HFS+) and case-sensitive (HFSX) lookup, volume name, hidden flags.
+Safety: refuses volumes with an unreplayed journal (stale metadata) or with the software-lock attribute.
+Limitations: transparently compressed (decmpfs) files are listed but reads fail with `Unsupported`; names are shown as stored (Unicode NFD, on-disk `:` is BSD `/`) and matching does not normalise NFC/NFD or use Apple's exact fold table (simple Unicode lowercase); symlinks are shown as small files holding the target; resource forks, xattrs, ACLs and directory hard links are not exposed; legacy HFS wrapper volumes are not supported. Verified against a read-only macOS mount of an OS-created image (616 entries, byte-compared) plus hard links, a fragmented file and a 600-file directory.
+
+## APFS (`fs-apfs`, read-only)
+Supported: newest valid checkpoint superblock, container/volume object maps, FS B-tree (keys verified by Fletcher-64 on every object read), extents incl. sparse holes, hard links, symlinks, case-sensitive and -insensitive volumes. Opens the first volume by default (`ApfsFs::open_volume` selects another).
+Limitations: encrypted volumes are refused; snapshots are not browsable (live state only); compressed files fail on read; sealed/system-volume firmlinks, fusion drives, clone-aware free-space and xattrs are not exposed; the FFI offers no volume picker yet, so only the first volume of a container can be browsed from the app. Verified against a macOS mount (616 entries, byte-compared), including case-sensitive volumes and 200+ corrupted-image runs without panics.
+
+## ext2/3/4 (`fs-ext`, read-only)
+Supported: indirect-block and extent files (including multi-level extent trees and triple-indirect), sparse files, uninitialised extents, 64-bit, flex_bg, meta_bg, large and htree directories (linear scan), symlinks (fast and slow), hard links.
+Safety: refuses volumes needing journal recovery and any unknown incompatible feature; encrypted and inline-data inodes fail with `Unsupported`.
+Limitations: no checksum verification, no journal replay, casefold/encryption/inline-data unsupported, device nodes/FIFOs/sockets appear as empty files, xattrs/ACLs/permissions are not exposed. Verified against `mke2fs -d` images (host tree is ground truth, images confirmed clean by `e2fsck -fn`) for ext2 (1k), ext3, ext4 (1k and 4k) and ext4 with 64bit+meta_bg. Fixture tests need e2fsprogs (`tests/fixtures/build_e2fsprogs.sh`) and skip with a message when `VOLUMA_E2FSPROGS` is unset and the tools are not on `PATH`.
+
 ## Not yet implemented anywhere
 Mounting, permissions, extended attributes, symlinks, snapshots, encryption, recovery, repair.
