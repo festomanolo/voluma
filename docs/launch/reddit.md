@@ -34,7 +34,7 @@ macOS can read NTFS but not write to it, so Paste is greyed out on every Windows
 - Also: read ext2/3/4 (Linux drives), APFS and HFS+; read and write exFAT and FAT; copy between any two drives and with Finder; a Storage Lens that shows where your space went (3.3M files in about 50 s); eject external drives from the same screen.
 - Install: `pip install nolo-voluma` then `voluma`, or download the zip from the releases page.
 
-[demo GIF]
+[demo GIF: site/assets/img/demo.gif, also https://raw.githubusercontent.com/festomanolo/voluma/main/site/assets/img/demo.gif]
 
 Honest bits: it is not notarised yet (right-click Open the first time, or install with pip), NTFS writing is verified against ntfs-3g but not Windows chkdsk so back up important drives, and it works inside its own window rather than mounting in Finder. Free and open source (MIT).
 

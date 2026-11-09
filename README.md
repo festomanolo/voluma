@@ -10,6 +10,8 @@
 
 <p align="center"><img src="site/assets/img/og-image.png" alt="VOLUMA listing a Mac's disks, partitions and free space" width="760"></p>
 
+<p align="center"><img src="site/assets/img/demo.gif" alt="Writing a file to an NTFS drive: open the drive, Enable Writing, paste, done" width="760"><br><sub>Writing to an NTFS drive: open it, Enable Writing, paste, done (real recording of the app on a demo volume).</sub></p>
+
 ## Install
 
 ```bash

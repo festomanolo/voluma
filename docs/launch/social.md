@@ -1,7 +1,7 @@
 # X, Mastodon, LinkedIn, Bluesky
 
 ## Thread (X / Mastodon / Bluesky)
-1. macOS can read NTFS drives but will not write to them. I built a free app that does, and it also reads ext4, APFS and HFS+. VOLUMA, open source. [demo GIF]
+1. macOS can read NTFS drives but will not write to them. I built a free app that does, and it also reads ext4, APFS and HFS+. VOLUMA, open source. [demo GIF: site/assets/img/demo.gif, also https://raw.githubusercontent.com/festomanolo/voluma/main/site/assets/img/demo.gif]
 2. How writing works: it unmounts the volume, asks for your password once, writes with its own Rust NTFS driver, then gives the drive back. It refuses drives Windows left dirty or hibernated.
 3. I did not want "trust me" as the safety story, so every driver is judged by someone else's implementation: ntfs-3g checks the NTFS volumes, e2fsck checks ext4, macOS fsck checks FAT and exFAT.
 4. That caught a real bug my own tests missed: NTFS data run lengths are signed, so a 171 cluster file looked like a negative length to ntfs-3g. There is now a regression test for it.

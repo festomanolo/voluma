@@ -126,13 +126,14 @@ struct BrowserView: View {
 
     private var helperBanner: some View {
         HStack(spacing: 10) {
-            Image(systemName: "pencil.circle.fill").foregroundStyle(helperCanWrite ? .green : .secondary)
-            Text(helperCanWrite ? "Writing through VOLUMA’s driver. The volume is unmounted from macOS until you finish."
+            Image(systemName: "pencil.circle.fill").foregroundStyle(listing == nil ? Color.secondary : (helperCanWrite ? .green : .secondary))
+            Text(listing == nil ? "Connecting through VOLUMA’s driver…"
+                 : helperCanWrite ? "Writing through VOLUMA’s driver. The volume is unmounted from macOS until you finish."
                                 : (listing?.write_blocked.map { "Read-only: \($0)" } ?? "Reading through VOLUMA’s driver (read-only for this filesystem)."))
                 .font(.callout)
             Spacer()
             Button(target.rawOnly ? "Close" : "Finish & Remount") { finishHelper() }
-        }.padding(.horizontal, 14).padding(.vertical, 8).background((helperCanWrite ? Color.green : Color.gray).opacity(0.12))
+        }.padding(.horizontal, 14).padding(.vertical, 8).background(((listing != nil && helperCanWrite) ? Color.green : Color.gray).opacity(0.12))
     }
 
     func enableNtfsWriting() {
