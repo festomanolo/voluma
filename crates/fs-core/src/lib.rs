@@ -79,6 +79,9 @@ pub trait Filesystem: Send + Sync {
     /// Streaming positional read; returns bytes read (0 at EOF).
     fn read_at(&self, entry: &DirEntry, offset: u64, buf: &mut [u8]) -> Result<usize>;
 
+    /// If the volume's state forbids writing (dirty, hibernated, ...), why. `None` = writable when the device is.
+    fn write_blocked(&self) -> Option<&'static str> { None }
+
     // ---- mutation: drivers that cannot do these must say so, never emulate ----
     fn create_dir(&self, _path: &str) -> Result<DirEntry> { Err(FsError::Unsupported("create_dir")) }
     /// Streams `src` into a file. Fails with `AlreadyExists` unless `overwrite`.

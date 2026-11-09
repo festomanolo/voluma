@@ -17,6 +17,7 @@ fs-exfat = { path = "../fs-exfat" }
 fs-hfsplus = { path = "../fs-hfsplus" }
 fs-ext = { path = "../fs-ext" }
 fs-apfs = { path = "../fs-apfs" }
+fs-ntfs = { path = "../fs-ntfs" }
 sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true

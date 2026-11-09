@@ -91,3 +91,53 @@ fn browse_and_export_hfsplus_and_apfs_read_only() {
         assert!(m["error"].as_str().unwrap().contains("read-only"), "{m}");
     }
 }
+
+fn ntfs_tool(name: &str) -> Option<std::path::PathBuf> {
+    let d = std::env::var("VOLUMA_NTFS3G").ok()?;
+    ["", "bin", "sbin"].iter().map(|s| std::path::Path::new(&d).join(s).join(name)).find(|p| p.is_file())
+}
+
+#[test]
+fn ntfs_browse_export_and_mutate_through_ffi() {
+    let (Some(mkntfs), Some(pop), Some(resize)) = (ntfs_tool("mkntfs"), ntfs_tool("ntfs_populate"), ntfs_tool("ntfsresize")) else {
+        eprintln!("SKIPPED: ntfs-3g tools not found (set VOLUMA_NTFS3G)"); return;
+    };
+    let d = tempfile::tempdir().unwrap();
+    let src = d.path().join("src");
+    std::fs::create_dir_all(src.join("docs")).unwrap();
+    std::fs::write(src.join("README.TXT"), b"hello voluma\n").unwrap();
+    std::fs::write(src.join("docs/a.txt"), b"a").unwrap();
+    std::fs::write(src.join("big.bin"), vec![0xABu8; 1_500_000]).unwrap();
+    let img = d.path().join("n.img");
+    std::fs::File::create(&img).unwrap().set_len(32 << 20).unwrap();
+    assert!(Command::new(mkntfs).args(["-F", "-Q", "-L", "NTFSVOL"]).arg(&img).output().unwrap().status.success());
+    assert!(Command::new(pop).arg(&img).arg(&src).output().unwrap().status.success());
+    let i = img.to_str().unwrap();
+
+    let v = json(voluma_ffi::inspect_image_json(i));
+    assert_eq!(v["ok"]["whole_disk_filesystem"]["kind"], "ntfs", "{v}");
+    let l = json(voluma_ffi::list_directory_json(i, -1, "/"));
+    assert_eq!(l["ok"]["filesystem"], "NTFS", "{l}");
+    assert_eq!(l["ok"]["driver_supports_write"], true, "{l}");
+    assert!(l["ok"]["write_blocked"].is_null(), "clean volume: {l}");
+    assert_eq!(l["ok"]["capabilities"]["write"], false, "listing itself stays read-only: {l}");
+
+    let dest = d.path().join("big.out");
+    let e = json(voluma_ffi::export_file_json(i, -1, "/big.bin", dest.to_str().unwrap()));
+    assert_eq!(e["ok"]["bytes"], 1_500_000, "{e}");
+    assert_eq!(std::fs::read(&dest).unwrap(), vec![0xABu8; 1_500_000]);
+
+    let f = d.path().join("in.txt");
+    std::fs::write(&f, b"imported via ffi into ntfs").unwrap();
+    assert_eq!(json(voluma_ffi::mutate_json(i, -1, "mkdir", "/made", "", false))["ok"]["done"], "mkdir");
+    assert_eq!(json(voluma_ffi::mutate_json(i, -1, "import", "/made/in.txt", f.to_str().unwrap(), false))["ok"]["bytes"], 26);
+    assert!(json(voluma_ffi::mutate_json(i, -1, "import", "/made/in.txt", f.to_str().unwrap(), false)).get("error").is_some(), "no silent overwrite");
+    assert!(json(voluma_ffi::mutate_json(i, -1, "rename", "/made/in.txt", "/made/out.txt", false)).get("ok").is_some());
+    assert!(json(voluma_ffi::mutate_json(i, -1, "delete", "/made", "", false)).get("error").is_some(), "non-empty dir");
+    let cat = Command::new(ntfs_tool("ntfscat").unwrap()).arg("-f").arg(&img).arg("/made/out.txt").output().unwrap();
+    assert_eq!(cat.stdout, b"imported via ffi into ntfs");
+    assert!(json(voluma_ffi::mutate_json(i, -1, "delete", "/made/out.txt", "", false)).get("ok").is_some());
+    assert!(json(voluma_ffi::mutate_json(i, -1, "delete", "/made", "", false)).get("ok").is_some());
+    let o = Command::new(resize).args(["-i", "-f"]).arg(&img).output().unwrap();
+    assert!(o.status.success(), "ntfsresize: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+}

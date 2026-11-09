@@ -90,6 +90,7 @@ fn open_fs(image: &str, part: i32, writable: bool) -> Result<Box<dyn Filesystem>
         FsKind::HfsPlus => Ok(Box::new(fs_hfsplus::HfsPlusFs::open(vol).map_err(|e| e.to_string())?)),
         FsKind::Ext => Ok(Box::new(fs_ext::ExtFs::open(vol).map_err(|e| e.to_string())?)),
         FsKind::Apfs => Ok(Box::new(fs_apfs::ApfsFs::open(vol).map_err(|e| e.to_string())?)),
+        FsKind::Ntfs => Ok(Box::new(fs_ntfs::NtfsFs::open(vol).map_err(|e| e.to_string())?)),
         k => Err(format!("No driver yet for {k:?}; this filesystem is detected but cannot be browsed")),
     }
 }
@@ -112,7 +113,9 @@ pub fn list_directory_json(image: &str, part: i32, path: &str) -> String {
             "filesystem": fs.name(), "label": fs.label(),
             "capabilities": fs.capabilities(), "entries": entries,
             // Whether the driver CAN write (the listing itself is opened read-only).
-            "driver_supports_write": matches!(fs.name(), "FAT12" | "FAT16" | "FAT32" | "exFAT"),
+            "driver_supports_write": matches!(fs.name(), "FAT12" | "FAT16" | "FAT32" | "exFAT" | "NTFS"),
+            // Set when the volume's own state (dirty, hibernated, unclean log) forbids writing.
+            "write_blocked": fs.write_blocked(),
         }))
     })())
 }
@@ -145,6 +148,7 @@ pub fn export_file_json(image: &str, part: i32, fs_path: &str, dest: &str) -> St
 pub fn mutate_json(image: &str, part: i32, op: &str, a: &str, b: &str, overwrite: bool) -> String {
     wrap((|| {
         let fs = open_fs(image, part, true)?;
+        if let Some(why) = fs.write_blocked() { return Err(format!("this volume cannot be written safely: {why}")); }
         if !fs.capabilities().write { return Err("this filesystem driver is read-only".to_string()); }
         let m = |e: fs_core::FsError| e.to_string();
         match op {

@@ -145,6 +145,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-ntfs"
+version = "0.1.0"
+dependencies = [
+ "block-device",
+ "fs-core",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -370,6 +380,7 @@ dependencies = [
  "fs-ext",
  "fs-fat",
  "fs-hfsplus",
+ "fs-ntfs",
  "partition-manager",
  "serde",
  "serde_json",

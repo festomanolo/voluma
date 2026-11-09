@@ -9,7 +9,8 @@ Updated only when a capability is implemented **and** tested.
 | HFS+ / HFSX | yes | yes (read-only) | no | see below |
 | APFS | yes | yes (read-only) | no | see below |
 | ext2/3/4 | yes | yes (read-only) | no | see below |
-| NTFS, XFS, Btrfs | detection only (unit-tested signatures) | no | no | no driver exists |
+| NTFS | yes | yes | yes (guarded) | see below |
+| XFS, Btrfs | detection only (unit-tested signatures) | no | no | no driver exists |
 | ZFS | **not detected** | no | no | no detection, no driver |
 
 ## FAT12/16/32 (`fs-fat`)
@@ -35,6 +36,12 @@ Limitations: encrypted volumes are refused; snapshots are not browsable (live st
 Supported: indirect-block and extent files (including multi-level extent trees and triple-indirect), sparse files, uninitialised extents, 64-bit, flex_bg, meta_bg, large and htree directories (linear scan), symlinks (fast and slow), hard links.
 Safety: refuses volumes needing journal recovery and any unknown incompatible feature; encrypted and inline-data inodes fail with `Unsupported`.
 Limitations: no checksum verification, no journal replay, casefold/encryption/inline-data unsupported, device nodes/FIFOs/sockets appear as empty files, xattrs/ACLs/permissions are not exposed. Verified against `mke2fs -d` images (host tree is ground truth, images confirmed clean by `e2fsck -fn`) for ext2 (1k), ext3, ext4 (1k and 4k) and ext4 with 64bit+meta_bg. Fixture tests need e2fsprogs (`tests/fixtures/build_e2fsprogs.sh`) and skip with a message when `VOLUMA_E2FSPROGS` is unset and the tools are not on `PATH`.
+
+## NTFS (`fs-ntfs`, read + write)
+Read: MFT incl. fragmented MFT and attribute lists, resident / non-resident / sparse data, B-tree directories (INDEX_ROOT + INDEX_ALLOCATION, tested to depth 3 with 3000+ entries), Win32/POSIX names (DOS 8.3 names hidden), `$UpCase` case-insensitive lookup, volume label. `$`-metafiles are hidden.
+Write: create / overwrite / delete / rename (incl. moving directories) / mkdir. Directory index inserts split nodes, convert a full index root into INDEX_ALLOCATION blocks, grow the allocation, and deletes replace internal entries with their in-order neighbour. The MFT grows when it runs out of records. New files inherit the parent's security (security id, or a copied descriptor on volumes without `$Secure`).
+Safety: writes need a read-write device AND a clean volume: NTFS 3.x, volume dirty bit clear, `$LogFile` clean, and no Windows hibernation/Fast Startup (`hiberfil.sys` marker). Otherwise `Refused` with the reason (the app shows it). The dirty bit is raised for the duration of each operation and cleared afterwards; after an I/O error it is left set so Windows runs chkdsk. Data is written first, then bitmaps, then the MFT record, and the directory entry last; failures release what was allocated. System files (MFT records < 24) cannot be deleted or renamed.
+Limitations: compressed (LZNT1) and EFS-encrypted data are refused (`Unsupported`), as are dedup/cloud reparse points on read; writing refuses files with attribute lists, hard links, compressed/encrypted/sparse data and alternate-stream-heavy records; no `$LogFile` / `$UsnJrnl` / `$ObjId` / quota updates (like ntfs-3g); new names use the Win32 namespace only (no 8.3 alias); deleting can leave empty index blocks (valid, not compacted); the MFT bitmap must be non-resident and large directories whose index bitmap is non-resident cannot grow; no ADS or ACL editing; rename is not atomic (old names are unlinked before the new one is linked, restoring them if linking fails). **Not verified against Windows**: ntfs-3g (`ntfsresize -i -f`, `ntfscat`, `ntfsls`) is the only independent judge; run `chkdsk` on Windows before trusting a drive you wrote to with real data. Fixtures need ntfs-3g (`tests/fixtures/build_ntfs3g.sh`, then `VOLUMA_NTFS3G=...`); the tests SKIP loudly without it.
 
 ## Not yet implemented anywhere
 Mounting, permissions, extended attributes, symlinks, snapshots, encryption, recovery, repair.

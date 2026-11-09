@@ -11,7 +11,7 @@ A universal filesystem explorer and storage manager. Rust core engine, native Sw
 | HFS+ / HFSX | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
 | APFS | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
 | ext2/3/4 | Tested (unit) | **Tested** (`mke2fs -d` images, `e2fsck`-clean) | No | Planned |
-| NTFS | Tested (unit) | Planned | Planned | Planned |
+| NTFS | Tested (ntfs-3g images) | **Tested** (vs. host tree, ntfs-3g) | **Tested** (ntfs-3g `ntfsresize -i -f` + `ntfscat`; not yet verified on Windows) | Planned |
 | XFS, Btrfs | Tested (unit) | Planned | Planned | Planned |
 | ZFS | Not detected | Planned | Planned | Planned |
 
@@ -19,10 +19,11 @@ A universal filesystem explorer and storage manager. Rust core engine, native Sw
 
 ### Real vs. simulated
 - **Real:** raw image backend (read-only by default, bounds-checked), partition windows, MBR/GPT parsing, signature-based filesystem detection, the C-ABI bridge, and the SwiftUI "Open Disk Image" inspector.
-- **Simulated (badged in the UI):** the dashboard's device list (`apps/macos/Sources/Voluma/Mock`).
+- **Real (native macOS):** the Disks view lists every physical disk, disk image and network volume with its partitions, APFS containers/volumes, capacity and free space (IOKit + DiskArbitration, refreshed on mount/unmount). **Storage Lens** scans a volume or folder with a parallel `getattrlistbulk` worker pool (a 195 GB / 3.3M-file volume in ~67 s; totals match `du` byte-for-byte) and shows a category breakdown, Finder-style drill-down and the largest files. No simulated data remains.
 - **Real (new):** FAT12/16/32 (`fs-fat`) and exFAT (`fs-exfat`) read/write drivers, `fs-core` filesystem trait with capability reporting, folder browsing, SHA-256-verified export, and (behind an explicit unlock) import / new folder / rename / delete in the app. Write access is off by default.
 - **Real (read-only):** HFS+/HFSX (`fs-hfsplus`), APFS (`fs-apfs`) and ext2/3/4 (`fs-ext`) browse + verified export; the FFI refuses writes to them.
-- **Not started:** NTFS / Btrfs / XFS / ZFS drivers, cross-volume transfers, recovery, mounting, real device discovery.
+- **Real (read + write, guarded):** NTFS (`fs-ntfs`): refuses dirty, hibernated or unclean-log volumes.
+- **Not started:** Btrfs / XFS / ZFS drivers, cross-volume transfers, recovery, mounting, real device discovery.
 
 ## Layout
 - `crates/block-device`: `BlockDevice` trait, `ImageDevice`, `PartitionWindow` (drivers get a window, so they can't write outside their partition)
