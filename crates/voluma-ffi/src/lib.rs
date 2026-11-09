@@ -84,6 +84,12 @@ fn open_fs(image: &str, part: i32, writable: bool) -> Result<Box<dyn Filesystem>
         FsKind::Fat12 | FsKind::Fat16 | FsKind::Fat32 =>
             Ok(Box::new(fs_fat::FatFs::open(vol).map_err(|e| e.to_string())?)),
         FsKind::ExFat => Ok(Box::new(fs_exfat::ExFatFs::open(vol).map_err(|e| e.to_string())?)),
+        // Read-only drivers: refuse up front instead of letting a write attempt reach them.
+        FsKind::HfsPlus | FsKind::Ext | FsKind::Apfs if writable =>
+            Err(format!("The {:?} driver is read-only; writing is not supported", d.kind)),
+        FsKind::HfsPlus => Ok(Box::new(fs_hfsplus::HfsPlusFs::open(vol).map_err(|e| e.to_string())?)),
+        FsKind::Ext => Ok(Box::new(fs_ext::ExtFs::open(vol).map_err(|e| e.to_string())?)),
+        FsKind::Apfs => Ok(Box::new(fs_apfs::ApfsFs::open(vol).map_err(|e| e.to_string())?)),
         k => Err(format!("No driver yet for {k:?}; this filesystem is detected but cannot be browsed")),
     }
 }
