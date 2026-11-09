@@ -6,7 +6,11 @@ Updated only when a capability is implemented **and** tested.
 |---|---|---|---|---|
 | FAT12/16/32 | yes | yes | yes | see below |
 | exFAT | yes | yes | yes | see below |
-| NTFS, ext2/3/4, APFS, HFS+, Btrfs, XFS, ZFS | detection only (unit-tested signatures) | no | no | no driver exists |
+| HFS+ / HFSX | yes | yes (read-only) | no | see below |
+| APFS | yes | yes (read-only) | no | see below |
+| ext2/3/4 | yes | yes (read-only) | no | see below |
+| NTFS, XFS, Btrfs | detection only (unit-tested signatures) | no | no | no driver exists |
+| ZFS | **not detected** | no | no | no detection, no driver |
 
 ## FAT12/16/32 (`fs-fat`)
 Supported: long names (UTF-16), 8.3 short-name generation with `~N` tails, nested directories, directory growth, create / overwrite / delete / rename (including moving directories, with `..` fix-up), streaming writes, rollback on out-of-space or source failure.
