@@ -10,7 +10,7 @@
 <meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
 <meta name="author" content="Festo Kasalu Magembe">
-<meta name="keywords" content="write to NTFS on Mac, NTFS for Mac free, read ext4 on Mac, Mac filesystem explorer, macOS disk explorer, NTFS write macOS Tahoe, Paragon NTFS alternative, Tuxera NTFS alternative, read Linux drive on Mac, disk usage analyzer Mac, storage analyzer macOS, copy files to NTFS drive Mac, read APFS HFS+ ext4 NTFS exFAT">
+<meta name="keywords" content="write to NTFS on Mac, NTFS for Mac free, read ext4 on Mac, Mac filesystem explorer, macOS disk explorer, NTFS write macOS Tahoe, Paragon NTFS alternative, Tuxera NTFS alternative, read Linux drive on Mac, disk usage analyzer Mac, storage analyzer macOS, copy files to NTFS drive Mac, read APFS HFS+ ext4 NTFS exFAT, pip install nolo-voluma">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="VOLUMA">
 <meta property="og:title" content="Write to NTFS on Mac: VOLUMA, Free Filesystem Explorer">
@@ -50,6 +50,8 @@
       "license":"https://opensource.org/licenses/MIT",
       "url":"https://festomanolo.com/voluma/",
       "downloadUrl":"https://festomanolo.com/voluma/downloads/{{ZIP_NAME}}",
+      "installUrl":"https://pypi.org/project/nolo-voluma/",
+      "sameAs":["https://github.com/festomanolo/voluma","https://pypi.org/project/nolo-voluma/"],
       "image":"https://festomanolo.com/voluma/assets/img/og-image.png",
       "screenshot":["https://festomanolo.com/voluma/assets/img/disks.webp","https://festomanolo.com/voluma/assets/img/lens.webp","https://festomanolo.com/voluma/assets/img/ntfs-writing.webp"],
       "author":{"@id":"https://festomanolo.com/#author"},
@@ -62,7 +64,8 @@
         "Copies and pastes files between any two drives, and with Finder",
         "Storage Lens shows where disk space went, scanning millions of files in about a minute",
         "Safe eject for external drives",
-        "Refuses to write to dirty or hibernated NTFS volumes"
+        "Refuses to write to dirty or hibernated NTFS volumes",
+        "Installs with pip install nolo-voluma and opens from any terminal with the voluma command"
       ]
     },
     {
@@ -274,11 +277,17 @@
         </div>
         <p class="sha">SHA-256 {{SHA256}}</p>
       </div>
+      <div>
+        <h3 style="margin-bottom:12px">From the terminal</h3>
+        <div class="pipbox"><code id="pipcmd">pip install nolo-voluma</code><button class="copy" type="button" data-copy="pip install nolo-voluma" aria-label="Copy the install command">{{ICON:copy}} Copy</button></div>
+        <p class="muted" style="margin:14px 0 26px">Then type <code>voluma</code> in any terminal to open the app, or <code>voluma install</code> to put it in Applications. pip does not mark files as downloaded, so macOS normally skips the unidentified developer warning.</p>
+        <h3 style="margin-bottom:12px">Or from the zip</h3>
       <ol>
         <li>Unzip and drag <code>VOLUMA.app</code> to Applications.</li>
         <li>The build is not notarised yet. Right-click the app and choose Open the first time, or run <code>xattr -cr /Applications/VOLUMA.app</code>.</li>
         <li>Writing to an external NTFS drive asks for your administrator password once per session.</li>
       </ol>
+      </div>
     </div>
   </div>
 </section>
@@ -294,6 +303,8 @@
       <details><summary>How is this different from Paragon or Tuxera NTFS for Mac?</summary><p>Those products are commercial drivers that mount an NTFS drive read-write in Finder. VOLUMA is a free app with its own driver: you browse and paste inside it, and it asks for permission each session. It is younger, so back up first.</p></details>
       <details><summary>Is it safe to write to my NTFS drive?</summary><p>The driver is tested against images made and checked by ntfs-3g, including corrupted disks, and it refuses unsafe volumes. It has not been checked with Windows chkdsk. Keep a backup of anything you cannot replace.</p></details>
       <details><summary>Is VOLUMA a disk image writer for bootable USB drives?</summary><p>No. VOLUMA reads and writes files inside filesystems. To flash a Windows or Linux ISO onto a USB drive, use <a href="/ndaga-fijo/">Ndaga Fijo</a>.</p></details>
+      <details><summary>Can I start VOLUMA from the terminal?</summary><p>Yes. Install with <span class="mono">pip install nolo-voluma</span>, then type <span class="mono">voluma</span> in any terminal. <span class="mono">voluma install</span> copies the app into Applications, and <span class="mono">voluma where</span> prints where it lives. You can still open it from Applications or Spotlight like any other app.</p></details>
+      <details><summary>Why install with pip?</summary><p>Because it is one command and it skips the download-and-Gatekeeper step. pip installs the same signed app that the zip contains, and it does not mark the files as downloaded from the internet, so macOS normally opens it without the unidentified developer warning. The package is only the app and a small launcher, with no other dependencies.</p></details>
       <details><summary>Does it run on Apple Silicon?</summary><p>{{ARCH_FAQ}}</p></details>
     </div>
   </div>

@@ -28,4 +28,11 @@
     document.documentElement.classList.add('stack-frames');
     frames.forEach(f => f.classList.add('on'));
   }
+
+  // Copy button for the install command. Feedback for a user action; hidden when the clipboard API is missing.
+  const btns = [...document.querySelectorAll('.copy')];
+  if (!navigator.clipboard) { btns.forEach(b => b.style.display = 'none'); }
+  btns.forEach(b => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); const t = b.innerHTML; b.classList.add('done'); b.lastChild.textContent = ' Copied'; setTimeout(() => { b.classList.remove('done'); b.innerHTML = t; }, 1600); } catch (e) { /* user can still select the text */ }
+  }));
 })();

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nolo-voluma"
+version = "0.1.0"
+description = "VOLUMA: a native macOS explorer that reads and writes NTFS, exFAT and FAT and browses ext4, APFS and HFS+. Run it with `voluma`."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+authors = [{ name = "Festo Kasalu Magembe", email = "festomanolo@icloud.com" }]
+keywords = ["ntfs", "macos", "filesystem", "ext4", "apfs", "hfs+", "exfat", "fat32", "disk", "write ntfs on mac", "disk explorer"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: MacOS X",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: System Administrators",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Filesystems",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://festomanolo.com/voluma/"
+Source = "https://github.com/festomanolo/voluma"
+Download = "https://github.com/festomanolo/voluma/releases/latest"
+"Write to NTFS on Mac" = "https://festomanolo.com/voluma/guides/write-to-ntfs-on-mac/"
+
+[project.scripts]
+voluma = "nolo_voluma.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["nolo_voluma"]
+include-package-data = true

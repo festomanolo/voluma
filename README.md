@@ -1,47 +1,101 @@
-# VOLUMA
-**Every disk. Every filesystem. One place.**
+<p align="center"><img src="site/assets/icon-1024.png" width="112" alt="VOLUMA app icon"></p>
+<h1 align="center">VOLUMA</h1>
+<p align="center"><b>Read and write every drive on your Mac.</b><br>A native macOS explorer that writes to NTFS, exFAT and FAT, and browses ext4, APFS and HFS+.</p>
+<p align="center">
+  <a href="https://github.com/festomanolo/voluma/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/festomanolo/voluma?color=ff8a3d"></a>
+  <a href="https://pypi.org/project/nolo-voluma/"><img alt="PyPI" src="https://img.shields.io/pypi/v/nolo-voluma?color=ff8a3d"></a>
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-lightgrey">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
-A universal filesystem explorer and storage manager. Rust core engine, native SwiftUI front end on macOS.
+<p align="center"><img src="site/assets/img/og-image.png" alt="VOLUMA listing a Mac's disks, partitions and free space" width="760"></p>
 
-## Status: early foundation
-| Filesystem | Detection | Read | Write | Mount |
-|---|---|---|---|---|
-| FAT12/16/32 | Tested (OS-generated images) | **Tested** | **Tested** (macOS `fsck_msdos` + OS mount) | Planned |
-| exFAT | Tested (OS-generated images) | **Tested** | **Tested** (macOS `fsck_exfat` + OS mount) | Planned |
-| HFS+ / HFSX | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
-| APFS | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
-| ext2/3/4 | Tested (unit) | **Tested** (`mke2fs -d` images, `e2fsck`-clean) | No | Planned |
-| NTFS | Tested (ntfs-3g images) | **Tested** (vs. host tree, ntfs-3g) | **Tested** (ntfs-3g `ntfsresize -i -f` + `ntfscat`; not yet verified on Windows) | Planned |
-| XFS, Btrfs | Tested (unit) | Planned | Planned | Planned |
-| ZFS | Not detected | Planned | Planned | Planned |
+## Install
 
-"Tested (unit)" = hand-built fixtures only. FAT and exFAT are tested against images generated and populated by macOS's own implementations (`tests/fixtures/make_fat_fixture.sh`): long/Unicode names, nested dirs, a 3 MB SHA-256-checked file, and 200 corrupted-image reads. Fixture tests need macOS; on macOS a generator failure fails the test instead of skipping.
-
-### Real vs. simulated
-- **Real:** raw image backend (read-only by default, bounds-checked), partition windows, MBR/GPT parsing, signature-based filesystem detection, the C-ABI bridge, and the SwiftUI "Open Disk Image" inspector.
-- **Real (native macOS):** the Disks view lists every physical disk, disk image and network volume with its partitions, APFS containers/volumes, capacity and free space (IOKit + DiskArbitration, refreshed on mount/unmount). **Storage Lens** scans a volume or folder with a parallel `getattrlistbulk` worker pool (a 195 GB / 3.3M-file volume in ~67 s; totals match `du` byte-for-byte) and shows a category breakdown, Finder-style drill-down and the largest files. No simulated data remains.
-- **Real (new):** FAT12/16/32 (`fs-fat`) and exFAT (`fs-exfat`) read/write drivers, `fs-core` filesystem trait with capability reporting, folder browsing, SHA-256-verified export, and (behind an explicit unlock) import / new folder / rename / delete in the app. Write access is off by default.
-- **Real (read-only):** HFS+/HFSX (`fs-hfsplus`), APFS (`fs-apfs`) and ext2/3/4 (`fs-ext`) browse + verified export; the FFI refuses writes to them.
-- **Real (read + write, guarded):** NTFS (`fs-ntfs`): refuses dirty, hibernated or unclean-log volumes.
-- **Not started:** Btrfs / XFS / ZFS drivers, cross-volume transfers, recovery, mounting, real device discovery.
-
-## Layout
-- `crates/block-device`: `BlockDevice` trait, `ImageDevice`, `PartitionWindow` (drivers get a window, so they can't write outside their partition)
-- `crates/partition-manager`: MBR/GPT parsing that validates all on-disk geometry
-- `crates/filesystem-detection`: signature/structure-based identification (never names)
-- `crates/voluma-ffi`: JSON-over-C-ABI; the front end never gets a device handle
-- `apps/macos`: SwiftUI app (SwiftPM)
-
-## Architecture decision: Swift on macOS
-The original spec called for Tauri + React. Per project direction, the macOS front end is native SwiftUI over the same Rust engine. Windows/Linux front ends remain open (Tauri is still a candidate there). The FFI boundary is the stable contract.
-
-## Build & test
-```sh
-cargo test --workspace
-apps/macos/build.sh && apps/macos/.build/release/Voluma
+```bash
+pip install nolo-voluma
+voluma
 ```
 
-## Docs
-- [Filesystem support & limitations](docs/FILESYSTEM_SUPPORT.md)
-- [Safety model](docs/SECURITY.md)
-- [Testing](docs/TESTING.md)
+`voluma` opens the app from any terminal. `voluma install` copies it to `/Applications`. Prefer a download? Grab the zip from the [latest release](https://github.com/festomanolo/voluma/releases/latest), unzip, and drag `VOLUMA.app` to Applications.
+
+> The app is ad-hoc signed and **not notarised yet**. A downloaded zip triggers Gatekeeper: right-click the app and choose Open the first time. Installing with pip avoids that in normal cases, because pip does not mark files as downloaded.
+
+Requires macOS 14 or later. The download is universal (Apple Silicon and Intel), but it was built and tested on an Intel Mac and **the Apple Silicon half has not been run on real Apple Silicon hardware yet**.
+
+## What it does
+
+| | |
+|---|---|
+| **Write to NTFS** | macOS mounts NTFS read-only. VOLUMA unmounts the volume, asks for your administrator password once, writes through its own NTFS driver, then remounts it. It refuses drives that Windows left dirty or hibernated. |
+| **Filesystems** | Read and write: NTFS, exFAT, FAT12/16/32. Read: ext2/3/4, APFS, HFS+/HFSX. |
+| **Disks view** | Every disk, partition, APFS container and volume as a collapsible tree, with capacity and free space, read from IOKit and DiskArbitration. Eject external drives from the same screen. |
+| **Copy and paste** | Between any two drives and with Finder. A name clash never overwrites. |
+| **Storage Lens** | Where your space went, by type, with Finder-style drill-down. Scans 3.3 million files in about 50 seconds. |
+| **Raw partitions** | Unmounted partitions (an ext4 drive, say) can be browsed through the same helper, read-only unless the driver can write. |
+
+Guides: [write to NTFS on a Mac](https://festomanolo.com/voluma/guides/write-to-ntfs-on-mac/) · [read an ext4 drive on a Mac](https://festomanolo.com/voluma/guides/read-ext4-linux-drive-on-mac/)
+
+## Measured, not claimed
+
+Intel Core i5-10310U, macOS 26.7.1. Drive tests use disk images, a 256 MB file, a warm cache and the median of three runs, so they compare driver efficiency, not drive speed. Scan tests use real folders. Full charts and raw numbers: [festomanolo.com/voluma](https://festomanolo.com/voluma/#benchmarks).
+
+| | VOLUMA | Reference |
+|---|---|---|
+| Scan 3.3M files (195 GB volume) | 50 s | `du`: 243 s |
+| Scan `/Applications` (384k files) | 2.6 s | `du`: 8.9 s |
+| NTFS write, 256 MB | 2,140 MB/s | ntfs-3g `ntfscp`: 199 MB/s |
+| NTFS read, 256 MB | 5,366 MB/s | ntfs-3g `ntfscat`: 1,261 MB/s |
+| ext4 read, 256 MB | 5,794 MB/s | e2fsprogs `debugfs`: 753 MB/s |
+| FAT32 read / write | 1,842 / 583 MB/s | macOS: 2,000 / 253 MB/s |
+| exFAT small files (2,000) | 175 files/s | macOS: 597 files/s |
+
+The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
+
+## How it is built
+
+A Rust workspace holds the storage engine. A SwiftUI app sits on top through a small JSON-over-C-ABI boundary, so the front end never receives a device handle.
+
+| Crate | Role |
+|---|---|
+| `block-device` | `BlockDevice` trait, image and device backends, bounded partition windows |
+| `partition-manager`, `filesystem-detection` | MBR/GPT parsing and signature-based identification |
+| `fs-fat`, `fs-exfat`, `fs-ntfs` | read and write drivers |
+| `fs-ext`, `fs-apfs`, `fs-hfsplus` | read-only drivers |
+| `voluma-ffi` | the C ABI the app calls |
+| `voluma-helper` | the privileged helper (below) |
+| `apps/macos` | SwiftUI app: disk discovery, Storage Lens, browser, copy and paste |
+
+### The privileged helper
+
+Raw device nodes need root, so writing to a real NTFS drive goes through `voluma-helper`. It serves exactly one device fixed at launch, over a Unix socket that only your user can open (the peer uid is checked on every connection). It touches host files only by bare name inside a per-session staging folder, with `O_NOFOLLOW`, and refuses anything that is not a regular file you own. It flushes the device after every write and exits when the app does. If the device node is already writable by you (disk images are), no password is asked. See [the safety model](docs/SECURITY.md).
+
+## Safety and honesty
+
+- Writes need a read-write device **and** a clean volume. NTFS also checks the dirty bit, `$LogFile` and Windows hibernation. FAT and exFAT check their dirty flags.
+- File data is written first, then bitmaps, then the file record, and the directory entry last. A failed copy releases what it allocated.
+- Paste never overwrites. Delete on a mounted volume goes to the Trash.
+- **NTFS writing is verified against ntfs-3g (`ntfsresize -i -f`, `ntfscat`, `ntfsls`) and against corrupted disks, but not against Windows `chkdsk`.** Back up anything you cannot replace.
+- Not supported: compressed or encrypted NTFS files, files with hard links, alternate data streams, Btrfs, XFS, ZFS, and writing to ext4, APFS or HFS+. The MFT can grow but directory indexes can keep empty blocks after heavy deletes.
+- The helper is launched from inside the app bundle. That is development-grade: a distributable build should install a Developer ID-signed helper with `SMAppService`, which is not done.
+
+Details: [filesystem support and limits](docs/FILESYSTEM_SUPPORT.md).
+
+## Build and test
+
+```bash
+cargo test --workspace                 # drivers, FFI, helper
+apps/macos/build.sh && apps/macos/.build/release/Voluma   # build and run the app + helper
+apps/macos/package.sh                  # universal, ad-hoc signed VOLUMA.app + zip in target/dist
+pypi/build.sh                          # the nolo-voluma wheel around that app
+```
+
+Driver tests are judged by independent implementations, never by themselves: macOS (`fsck_msdos`, `fsck_exfat`, real mounts) for FAT, exFAT, HFS+ and APFS, e2fsprogs (`mke2fs`, `e2fsck`) for ext4, and ntfs-3g for NTFS. `tests/fixtures/build_ntfs3g.sh` and `build_e2fsprogs.sh` build those tools, then set `VOLUMA_NTFS3G` and `VOLUMA_E2FSPROGS`; without them the NTFS and ext4 tests skip with a message. See [testing](docs/TESTING.md).
+
+## Contributing
+
+Issues and pull requests are welcome, especially bug reports from real Windows and Linux drives, and Apple Silicon results. Please include the filesystem, how the drive was last used, and what VOLUMA reported.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). Website: <https://festomanolo.com/voluma/>
