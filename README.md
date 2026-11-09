@@ -8,6 +8,9 @@ A universal filesystem explorer and storage manager. Rust core engine, native Sw
 |---|---|---|---|---|
 | FAT12/16/32 | Tested (OS-generated images) | **Tested** | **Tested** (macOS `fsck_msdos` + OS mount) | Planned |
 | exFAT | Tested (OS-generated images) | **Tested** | **Tested** (macOS `fsck_exfat` + OS mount) | Planned |
+| HFS+ / HFSX | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
+| APFS | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
+| ext2/3/4 | Tested (unit) | **Tested** (`mke2fs -d` images, `e2fsck`-clean) | No | Planned |
 | NTFS | Tested (unit) | Planned | Planned | Planned |
 | ext2/3/4 | Tested (unit) | Planned | Planned | Planned |
 | APFS | Signature only | Planned | No | Planned |
