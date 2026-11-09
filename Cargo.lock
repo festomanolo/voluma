@@ -369,6 +369,7 @@ dependencies = [
  "fs-exfat",
  "fs-ext",
  "fs-fat",
+ "fs-hfsplus",
  "partition-manager",
  "serde",
  "serde_json",
