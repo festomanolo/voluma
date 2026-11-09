@@ -364,6 +364,7 @@ version = "0.1.0"
 dependencies = [
  "block-device",
  "filesystem-detection",
+ "fs-apfs",
  "fs-core",
  "fs-exfat",
  "fs-fat",
