@@ -135,6 +135,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-hfsplus"
+version = "0.1.0"
+dependencies = [
+ "block-device",
+ "fs-core",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
