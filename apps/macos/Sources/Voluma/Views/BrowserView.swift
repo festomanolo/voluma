@@ -2,128 +2,181 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-struct BrowseTarget: Equatable { let image: String; let part: Int; let title: String }
+struct BrowseTarget: Hashable {
+    let image: String; let part: Int; let title: String
+    /// Set for a mounted volume browsed natively (no disk image involved).
+    var nativeRoot: String? = nil
+}
 
+/// Finder-style browser for a disk image/partition (Rust engine) or a mounted volume (native).
+/// Copy/paste works between any two: within a volume, across volumes, and with Finder.
 struct BrowserView: View {
     let target: BrowseTarget
-    let close: () -> Void
+    @EnvironmentObject var nav: NavState
 
     @State private var path = "/"
+    @State private var backStack: [String] = []
+    @State private var forwardStack: [String] = []
     @State private var listing: Listing?
     @State private var error: String?
     @State private var selection: Set<Listing.Entry.ID> = []
     @State private var sortOrder = [KeyPathComparator(\Listing.Entry.name)]
     @State private var status: String?
-    // Write access is OFF by default and per-window; every mutation is validated again in Rust.
+    @State private var busy = false
+    // Writing into an IMAGE is OFF by default and per-window; every mutation is validated again in Rust.
+    // Mounted volumes behave like Finder: copying in is allowed, deleting goes to the Trash.
     @State private var writeUnlocked = false
     @State private var confirmUnlock = false
-    @State private var confirmDelete: Listing.Entry?
+    @State private var confirmDelete: [Listing.Entry] = []
     @State private var newFolderName = ""
     @State private var showNewFolder = false
     @State private var renaming: Listing.Entry?
     @State private var renameText = ""
 
+    private var backend: FSBackend {
+        if let r = target.nativeRoot { return NativeBackend(root: r) }
+        return EngineBackend(image: target.image, part: target.part)
+    }
+    private var isNative: Bool { target.nativeRoot != nil }
+    private var canWrite: Bool { isNative || writeUnlocked }
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
     private var sorted: [Listing.Entry] {
         (listing?.entries ?? []).sorted(using: sortOrder).sorted { $0.isDir && !$1.isDir }
     }
     private var driverWritable: Bool { listing?.driver_supports_write ?? false }
+    private var selected: [Listing.Entry] { sorted.filter { selection.contains($0.id) } }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Button { close() } label: { Image(systemName: "chevron.left") }.help("Back to image")
-                Button(target.title) { go("/") }.buttonStyle(.link)
-                ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
-                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                    Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
-                }
-                Spacer()
-                if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
-                if writeUnlocked {
-                    Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }
-                    Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
-                }
-                Button {
-                    if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
-                } label: {
-                    Label(writeUnlocked ? "Writable" : "Read-only", systemImage: writeUnlocked ? "lock.open.fill" : "lock.fill")
-                        .foregroundStyle(writeUnlocked ? .orange : .secondary)
-                }
-                .disabled(!driverWritable && !writeUnlocked)
-                .help(driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only")
-            }.padding(.horizontal, 14).padding(.vertical, 8)
+            toolbarRow
             Divider()
             if let error {
                 ContentUnavailableView("Can't read folder", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if listing != nil && sorted.isEmpty {
-                ContentUnavailableView("Empty folder", systemImage: "folder")
+                ContentUnavailableView("Empty folder", systemImage: "folder", description: Text(canWrite ? "Paste (⌘V) files here." : ""))
             } else {
-                Table(sorted, selection: $selection, sortOrder: $sortOrder) {
-                    TableColumn("Name", value: \.name) { e in
-                        Label(e.name, systemImage: e.isDir ? "folder.fill" : "doc")
-                            .foregroundStyle(e.hidden ? .secondary : .primary)
-                    }
-                    TableColumn("Size", value: \.size) { e in
-                        Text(e.isDir ? "—" : formatBytes(Int64(e.size))).foregroundStyle(.secondary)
-                    }.width(90)
-                    TableColumn("Modified") { e in
-                        Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
-                            .foregroundStyle(.secondary)
-                    }.width(150)
-                }
-                .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
-                    if let e = entry(ids) {
-                        if !e.isDir { Button("Export…") { export(e) } }
-                        if writeUnlocked {
-                            Button("Rename…") { renameText = e.name; renaming = e }
-                            Button("Delete…", role: .destructive) { confirmDelete = e }
-                        }
-                    }
-                } primaryAction: { ids in
-                    guard let e = entry(ids) else { return }
-                    if e.isDir { go(join(path, e.name)) } else { export(e) }
-                }
+                table
             }
             Divider()
-            HStack {
+            HStack(spacing: 8) {
+                if busy { ProgressView().controlSize(.small) }
                 Text(status ?? "\(sorted.count) items").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
             }.padding(.horizontal, 14).padding(.vertical, 5)
         }
-        .onAppear { load() }
+        .onAppear { load(); publishNav() }
+        .onChange(of: backStack) { _ in publishNav() }
         .confirmationDialog("Allow changes to this image?", isPresented: $confirmUnlock, titleVisibility: .visible) {
             Button("Allow Changes", role: .destructive) { writeUnlocked = true }
             Button("Keep Read-only", role: .cancel) {}
         } message: {
             Text("VOLUMA will modify the image file directly. Back it up first if it matters. Volumes that weren't cleanly unmounted are refused.")
         }
-        .confirmationDialog("Delete “\(confirmDelete?.name ?? "")”?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { if let e = confirmDelete { mutate("Deleted \(e.name)", "delete", join(path, e.name)) } ; confirmDelete = nil }
-            Button("Cancel", role: .cancel) { confirmDelete = nil }
-        } message: { Text("This permanently removes it from the image. There is no Trash.") }
+        .confirmationDialog(deleteTitle, isPresented: Binding(get: { !confirmDelete.isEmpty }, set: { if !$0 { confirmDelete = [] } }), titleVisibility: .visible) {
+            Button(isNative ? "Move to Trash" : "Delete", role: .destructive) { deleteSelected(confirmDelete); confirmDelete = [] }
+            Button("Cancel", role: .cancel) { confirmDelete = [] }
+        } message: { Text(isNative ? "Items go to the Trash and can be restored." : "This permanently removes it from the image. There is no Trash.") }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Name", text: $newFolderName)
-            Button("Create") { mutate("Created \(newFolderName)", "mkdir", join(path, newFolderName)) }
+            Button("Create") { run("Created \(newFolderName)") { try backend.mkdir(joinPath(path, newFolderName)) } }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $renameText)
-            Button("Rename") { if let e = renaming { mutate("Renamed to \(renameText)", "rename", join(path, e.name), join(path, renameText)) }; renaming = nil }
+            Button("Rename") { if let e = renaming { let n = renameText; run("Renamed to \(n)") { try backend.rename(joinPath(path, e.name), joinPath(path, n)) } }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
     }
 
-    func entry(_ ids: Set<Listing.Entry.ID>) -> Listing.Entry? {
-        ids.first.flatMap { id in sorted.first { $0.id == id } }
+    private var deleteTitle: String {
+        confirmDelete.count == 1 ? "\(isNative ? "Move" : "Delete") “\(confirmDelete[0].name)”?" : "\(isNative ? "Move" : "Delete") \(confirmDelete.count) items?"
     }
-    func join(_ a: String, _ b: String) -> String { a == "/" ? "/\(b)" : "\(a)/\(b)" }
-    func go(_ p: String) { path = p; selection = []; load() }
+
+    // MARK: toolbar
+    private var toolbarRow: some View {
+        HStack(spacing: 6) {
+            Button { goBack() } label: { Image(systemName: "chevron.left") }.disabled(backStack.isEmpty).help("Previous folder")
+            Button { goForward() } label: { Image(systemName: "chevron.right") }.disabled(forwardStack.isEmpty).help("Next folder")
+            Button(target.title) { go("/") }.buttonStyle(.link)
+            ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
+            }
+            Spacer()
+            if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
+            Button("Copy", systemImage: "doc.on.doc") { copySelection() }.disabled(selection.isEmpty).help("Copy selected items (⌘C)")
+            Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy).help(canWrite ? "Paste into this folder (⌘V)" : "Unlock writing to paste into this image")
+            if canWrite {
+                Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }
+                Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
+            }
+            if !isNative {
+                Button {
+                    if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
+                } label: {
+                    Label(writeUnlocked ? "Writable" : "Read-only", systemImage: writeUnlocked ? "lock.open.fill" : "lock.fill")
+                        .foregroundStyle(writeUnlocked ? .orange : .secondary)
+                }
+                .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
+                .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
+            }
+        }.padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private var table: some View {
+        Table(sorted, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Name", value: \.name) { e in
+                Label(e.name, systemImage: e.isDir ? "folder.fill" : "doc")
+                    .foregroundStyle(e.hidden ? .secondary : .primary)
+            }
+            TableColumn("Size", value: \.size) { e in
+                Text(e.isDir ? "—" : formatBytes(Int64(e.size))).foregroundStyle(.secondary)
+            }.width(90)
+            TableColumn("Modified") { e in
+                Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
+                    .foregroundStyle(.secondary)
+            }.width(150)
+        }
+        .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
+            let es = sorted.filter { ids.contains($0.id) }
+            if !es.isEmpty {
+                Button("Copy") { selection = ids; copySelection() }
+                if canWrite { Button("Paste") { paste() } }
+                if es.count == 1, let e = es.first {
+                    if isNative { Button("Reveal in Finder") { if let u = backend.hostURL(joinPath(path, e.name)) { NSWorkspace.shared.activateFileViewerSelecting([u]) } } }
+                    else if !e.isDir { Button("Export…") { export(e) } }
+                    if canWrite { Button("Rename…") { renameText = e.name; renaming = e } }
+                }
+                if canWrite { Button(isNative ? "Move to Trash…" : "Delete…", role: .destructive) { confirmDelete = es } }
+            } else if canWrite { Button("Paste") { paste() } }
+        } primaryAction: { ids in
+            guard let e = sorted.first(where: { ids.contains($0.id) }) else { return }
+            if e.isDir { go(joinPath(path, e.name)) }
+            else if isNative, let u = backend.hostURL(joinPath(path, e.name)) { NSWorkspace.shared.open(u) }
+            else { export(e) }
+        }
+        // ⌘C / ⌘V reach these through the responder chain, so text fields in the alerts keep working.
+        .onCopyCommand { copySelection(); return [] }
+        .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
+    }
+
+    // MARK: navigation
+    private func publishNav() {
+        nav.innerCanBack = !backStack.isEmpty
+        nav.innerBack = { goBack() }
+    }
+    func go(_ p: String) {
+        guard p != path else { return }
+        backStack.append(path); forwardStack = []
+        path = p; selection = []; load()
+    }
+    func goBack() { guard let p = backStack.popLast() else { return }; forwardStack.append(path); path = p; selection = []; load() }
+    func goForward() { guard let p = forwardStack.popLast() else { return }; backStack.append(path); path = p; selection = []; load() }
 
     func load() {
-        let (img, part, p) = (target.image, target.part, path)
+        let (b, p) = (backend, path)
         Task.detached {
-            let r = Result { try Engine.listDirectory(image: img, part: part, path: p) }
+            let r = Result { try b.list(p) }
             await MainActor.run {
                 switch r {
                 case .success(let l): listing = l; error = nil
@@ -133,28 +186,83 @@ struct BrowserView: View {
         }
     }
 
-    func mutate(_ ok: String, _ op: String, _ a: String, _ b: String = "", overwrite: Bool = false, then: (() -> Void)? = nil) {
-        let (img, part) = (target.image, target.part)
+    /// Runs a blocking mutation off the main thread, then refreshes.
+    func run(_ ok: String, _ work: @escaping () throws -> Void) {
+        busy = true
         Task.detached {
-            let r = Result { try Engine.mutate(image: img, part: part, op: op, a: a, b: b, overwrite: overwrite) }
+            let r = Result { try work() }
             await MainActor.run {
+                busy = false
                 switch r {
-                case .success: status = ok; load()
+                case .success: status = ok
                 case .failure(let e): status = "Failed: \(e.localizedDescription)"
                 }
+                load()
             }
         }
+    }
+
+    // MARK: copy / paste
+    func copySelection() {
+        let es = selected
+        guard !es.isEmpty else { return }
+        Clip.shared.copy(backend: backend, items: es.map { (joinPath(path, $0.name), $0) })
+        status = "Copied \(es.count) item\(es.count == 1 ? "" : "s")"
+    }
+
+    func paste() {
+        guard canWrite else { status = "Unlock writing first to paste into an image"; return }
+        let (dst, dir) = (backend, path)
+        let src = Clip.shared.source()
+        if case .none = src { status = "Nothing to paste"; return }
+        busy = true
+        status = "Pasting…"
+        Task.detached {
+            var count = 0
+            var failure: String?
+            do {
+                var taken = Copier.takenNames(dst, dir)
+                switch src {
+                case .clip(let sb, let items):
+                    for it in items {
+                        count += try Copier.copy(src: sb, srcPath: it.path, entry: it.entry, dst: dst, dstDir: dir, taken: &taken) { n in
+                            Task { @MainActor in status = "Pasting \(n)…" }
+                        }
+                    }
+                case .files(let urls):
+                    for u in urls {
+                        count += try Copier.copyHost(u, dst: dst, dstDir: dir, taken: &taken) { n in
+                            Task { @MainActor in status = "Pasting \(n)…" }
+                        }
+                    }
+                case .none: break
+                }
+            } catch { failure = error.localizedDescription }
+            let (done, fail) = (count, failure)
+            await MainActor.run {
+                busy = false
+                status = fail.map { "Paste stopped after \(done) item\(done == 1 ? "" : "s"): \($0)" } ?? "Pasted \(done) item\(done == 1 ? "" : "s")"
+                load()
+            }
+        }
+    }
+
+    // MARK: other actions
+    func deleteSelected(_ es: [Listing.Entry]) {
+        let (b, dir) = (backend, path)
+        run("Deleted \(es.count) item\(es.count == 1 ? "" : "s")") { for e in es { try b.delete(joinPath(dir, e.name)) } }
     }
 
     func importFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.message = "Choose files to copy into \(path)"
+        panel.canChooseDirectories = true
+        panel.message = "Choose files or folders to copy into \(path)"
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            // Never silently replace: if the name exists, the engine refuses and we say so.
-            mutate("Imported \(url.lastPathComponent)", "import", join(path, url.lastPathComponent), url.path)
+        let (dst, dir, urls) = (backend, path, panel.urls)
+        run("Imported \(urls.count) item\(urls.count == 1 ? "" : "s")") {
+            var taken = Copier.takenNames(dst, dir)
+            for u in urls { try Copier.copyHost(u, dst: dst, dstDir: dir, taken: &taken) { _ in } }
         }
     }
 
@@ -164,13 +272,15 @@ struct BrowserView: View {
         panel.message = "Export copies the file out of the image."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? FileManager.default.removeItem(at: url)   // user confirmed replacement in the panel
-        let (img, part, src) = (target.image, target.part, join(path, e.name))
+        let (b, src) = (backend, joinPath(path, e.name))
         status = "Exporting \(e.name)…"
+        busy = true
         Task.detached {
-            let r = Result { try Engine.exportFile(image: img, part: part, path: src, dest: url.path) }
+            let r = Result { try b.exportFile(src, to: url) }
             await MainActor.run {
+                busy = false
                 switch r {
-                case .success(let x): status = "Exported \(e.name) · \(formatBytes(Int64(x.bytes))) · SHA-256 \(x.sha256.prefix(12))…"
+                case .success: status = "Exported \(e.name) · \(formatBytes(Int64(e.size)))"
                 case .failure(let err): status = "Export failed: \(err.localizedDescription)"
                 }
             }

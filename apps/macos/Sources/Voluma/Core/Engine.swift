@@ -67,6 +67,7 @@ struct Listing: Decodable {
     }
     struct Caps: Decodable { let read: Bool; let write: Bool }
     let filesystem: String; let label: String?; let entries: [Entry]; let capabilities: Caps; let driver_supports_write: Bool
+    let write_blocked: String?
 }
 
 struct MutateResult: Decodable { let done: String; let bytes: UInt64? }

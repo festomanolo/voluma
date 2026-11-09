@@ -1,79 +1,91 @@
 import SwiftUI
 
 enum Section: String, CaseIterable, Identifiable {
-    case dashboard = "Dashboard", images = "Disk Images"
+    case disks = "Disks", lens = "Storage Lens", images = "Disk Images"
     var id: String { rawValue }
-    var icon: String { self == .dashboard ? "externaldrive" : "opticaldisc" }
+    var icon: String {
+        switch self { case .disks: "internaldrive"; case .lens: "chart.pie"; case .images: "opticaldisc" }
+    }
 }
 
 struct ContentView: View {
-    @State private var section: Section? = .dashboard
+    /// Where the window is: a section, optionally with a browser open on top of it.
+    struct Place: Equatable { var section: Section; var browse: BrowseTarget? }
+
+    @State private var place = Place(section: .disks, browse: nil)
+    @State private var history: [Place] = []
+    @State private var collapsedDisks: Set<String> = []
     @State private var report: ImageReport?
     @State private var errorText: String?
     @State private var importing = false
-    @State private var browse: BrowseTarget?
+    @StateObject private var monitor = DiskMonitor()
+    @StateObject private var lens = LensModel()
+    @StateObject private var nav = NavState()
+
+    private func navigate(section: Section? = nil, browse: BrowseTarget? = nil) {
+        let next = Place(section: section ?? place.section, browse: browse)
+        guard next != place else { return }
+        history.append(place)
+        if history.count > 100 { history.removeFirst() }
+        place = next
+    }
+
+    /// Back first steps out of folders inside the open browser, then through the pages visited.
+    private func goBack() {
+        if place.browse != nil, nav.innerCanBack { nav.innerBack?(); return }
+        if let p = history.popLast() { place = p }
+    }
+    private var canGoBack: Bool { (place.browse != nil && nav.innerCanBack) || !history.isEmpty }
 
     var body: some View {
         NavigationSplitView {
-            List(Section.allCases, selection: $section) { s in
+            List(Section.allCases, selection: Binding<Section?>(get: { place.section }, set: { if let s = $0 { navigate(section: s) } })) { s in
                 Label(s.rawValue, systemImage: s.icon).tag(s)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
             Group {
-                switch section ?? .dashboard {
-                case .dashboard: DashboardView()
-                case .images:
-                    if let t = browse { BrowserView(target: t) { browse = nil } }
-                    else { ImageInspectorView(report: report, error: errorText, open: { importing = true }, browse: { browse = $0 }) }
+                if let t = place.browse {
+                    BrowserView(target: t).id(t)
+                } else {
+                    switch place.section {
+                    case .disks:
+                        DisksView(monitor: monitor, collapsed: $collapsedDisks,
+                                  openLens: { node in
+                                      guard let m = node.mountPath else { return }
+                                      lens.start(url: URL(fileURLWithPath: m), title: node.title, volume: node)
+                                      navigate(section: .lens)
+                                  },
+                                  openBrowse: { node in
+                                      guard let m = node.mountPath else { return }
+                                      navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m))
+                                  })
+                    case .lens: LensView(model: lens, monitor: monitor)
+                    case .images: ImageInspectorView(report: report, error: errorText, open: { importing = true },
+                                                     browse: { navigate(section: .images, browse: $0) })
+                    }
                 }
             }
-            .navigationTitle((section ?? .dashboard).rawValue)
+            .navigationTitle(place.browse?.title ?? place.section.rawValue)
         }
+        .environmentObject(nav)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }
+                    .disabled(!canGoBack).keyboardShortcut("[", modifiers: .command).help("Back (⌘[)")
+            }
+            ToolbarItem { Button("Refresh Disks", systemImage: "arrow.clockwise") { monitor.refresh() } }
             ToolbarItem { Button("Open Disk Image…", systemImage: "plus") { importing = true } }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in
             guard case .success(let url) = result else { return }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do { report = try Engine.inspectImage(path: url.path); errorText = nil; section = .images }
-            catch { report = nil; errorText = error.localizedDescription; section = .images }
+            do { report = try Engine.inspectImage(path: url.path); errorText = nil }
+            catch { report = nil; errorText = error.localizedDescription }
+            navigate(section: .images)
         }
-        .frame(minWidth: 860, minHeight: 540)
-    }
-}
-
-struct DashboardView: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Every disk. Every filesystem. One place.").font(.title3).foregroundStyle(.secondary)
-                    SimulatedBadge()
-                }
-                ForEach(SimulatedData.devices) { d in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "externaldrive.fill").foregroundStyle(.secondary)
-                            VStack(alignment: .leading) {
-                                Text(d.name).font(.headline)
-                                Text("\(d.model) · \(d.connection)").font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Text(d.filesystem).font(.caption.monospaced())
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                            Text(d.access).font(.caption).foregroundStyle(.secondary)
-                        }
-                        UsageBar(fraction: Double(d.used) / Double(d.capacity))
-                        Text("\(formatBytes(d.used)) of \(formatBytes(d.capacity)) used").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(14)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
-                }
-            }.padding(24)
-        }
+        .frame(minWidth: 960, minHeight: 600)
     }
 }
 
@@ -114,7 +126,7 @@ struct ImageInspectorView: View {
         }
     }
 
-    func canBrowse(_ kind: String) -> Bool { ["fat12", "fat16", "fat32", "ex_fat", "hfs_plus", "ext", "apfs"].contains(kind) }
+    func canBrowse(_ kind: String) -> Bool { ["fat12", "fat16", "fat32", "ex_fat", "hfs_plus", "ext", "apfs", "ntfs"].contains(kind) }
 
     func row(_ title: String, _ fs: String, _ label: String?, extra: String? = nil, browse: (() -> Void)? = nil) -> some View {
         HStack {
