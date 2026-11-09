@@ -12,6 +12,8 @@ struct BrowseTarget: Hashable {
     var readOnlyMount = false
     /// Writing goes through the privileged NTFS helper (volume unmounted from macOS).
     var viaHelper = false
+    /// The partition was never mounted by macOS (e.g. ext4): browsed raw through the helper, nothing to remount.
+    var rawOnly = false
 }
 
 /// Finder-style browser for a disk image/partition (Rust engine) or a mounted volume (native).
@@ -50,7 +52,9 @@ struct BrowserView: View {
     private var isNative: Bool { target.nativeRoot != nil && !target.viaHelper }
     private var isHelper: Bool { target.viaHelper }
     /// Mounted volumes behave like Finder unless macOS mounted them read-only; helper sessions are explicitly writable.
-    private var canWrite: Bool { (isNative && !target.readOnlyMount) || isHelper || writeUnlocked }
+    /// Helper sessions write only if the filesystem driver can and the volume state allows it (clean, not hibernated).
+    private var helperCanWrite: Bool { (listing?.driver_supports_write ?? false) && listing?.write_blocked == nil }
+    private var canWrite: Bool { (isNative && !target.readOnlyMount) || (isHelper && helperCanWrite) || writeUnlocked }
     private var needsNtfsUnlock: Bool { isNative && target.readOnlyMount && target.fsKind == "ntfs" && target.bsd != nil }
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
     private var sorted: [Listing.Entry] {
@@ -122,11 +126,13 @@ struct BrowserView: View {
 
     private var helperBanner: some View {
         HStack(spacing: 10) {
-            Image(systemName: "pencil.circle.fill").foregroundStyle(.green)
-            Text("Writing through VOLUMA’s NTFS driver. The volume is unmounted from macOS until you finish.").font(.callout)
+            Image(systemName: "pencil.circle.fill").foregroundStyle(helperCanWrite ? .green : .secondary)
+            Text(helperCanWrite ? "Writing through VOLUMA’s driver. The volume is unmounted from macOS until you finish."
+                                : (listing?.write_blocked.map { "Read-only: \($0)" } ?? "Reading through VOLUMA’s driver (read-only for this filesystem)."))
+                .font(.callout)
             Spacer()
-            Button("Finish & Remount") { finishHelper() }
-        }.padding(.horizontal, 14).padding(.vertical, 8).background(.green.opacity(0.12))
+            Button(target.rawOnly ? "Close" : "Finish & Remount") { finishHelper() }
+        }.padding(.horizontal, 14).padding(.vertical, 8).background((helperCanWrite ? Color.green : Color.gray).opacity(0.12))
     }
 
     func enableNtfsWriting() {

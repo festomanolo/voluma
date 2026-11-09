@@ -25,6 +25,17 @@ struct DiskNode: Identifiable, Hashable {
     var free: Int64?
     var children: [DiskNode] = []
 
+    /// An unmounted partition (or whole disk without a partition map) that VOLUMA's drivers might read: offered a raw browse.
+    var rawBrowsable: Bool {
+        guard !isMounted, children.isEmpty, size >= 1 << 20, !isNetwork else { return false }
+        let c = content.uppercased()
+        let skip = ["EFI", "C12A7328", "E3C9E316", "APPLE_BOOT", "APPLE_APFS_ISC", "APPLE_APFS_RECOVERY", "GUID_PARTITION_SCHEME", "FDISK_PARTITION_SCHEME"]
+        if skip.contains(where: { c.hasPrefix($0) }) { return false }
+        if isWhole && c.hasPrefix("EF57347C") { return false }
+        if c.hasPrefix("41504653") { return false }   // an APFS volume lives inside its container; only the container can be read raw
+        return true
+    }
+
     var isDiskImage: Bool { (busProtocol ?? "").localizedCaseInsensitiveContains("virtual") || (model ?? "").localizedCaseInsensitiveContains("disk image") }
     var isMounted: Bool { mountPath != nil }
 

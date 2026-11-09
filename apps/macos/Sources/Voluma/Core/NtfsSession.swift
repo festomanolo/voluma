@@ -11,6 +11,8 @@ final class NtfsSession: @unchecked Sendable {
     let bsd: String
     let title: String
     let stage: URL
+    /// Whether macOS had it mounted before we unmounted it (only then do we remount afterwards).
+    var wasMounted = true
     private let lock = NSLock()
     private var fd: Int32 = -1
 
@@ -89,6 +91,7 @@ final class NtfsSessions {
         let fm = FileManager.default
         var candidates: [URL] = []
         if let e = ProcessInfo.processInfo.environment["VOLUMA_HELPER"] { candidates.append(URL(fileURLWithPath: e)) }
+        candidates.append(Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/voluma-helper"))
         if let exe = Bundle.main.executableURL {
             candidates.append(exe.deletingLastPathComponent().appendingPathComponent("voluma-helper"))
             // swift build layout: <repo>/apps/macos/.build/<config>/Voluma  ->  <repo>/target/release/voluma-helper
@@ -100,7 +103,7 @@ final class NtfsSessions {
     }
 
     /// Unmounts the volume, starts the helper (admin prompt), and connects. On any failure the volume is remounted.
-    func start(bsd: String, title: String) async throws -> NtfsSession {
+    func start(bsd: String, title: String, mounted: Bool = true) async throws -> NtfsSession {
         if let s = active[bsd] { return s }
         guard let helper = Self.locateHelper() else { throw NtfsSession.SessionError(message: "voluma-helper wasn’t found. Build it with apps/macos/build.sh.") }
         let stage = FileManager.default.temporaryDirectory.appendingPathComponent("voluma-\(UUID().uuidString.prefix(8))")   // short: unix socket paths max out at 104 bytes
@@ -111,11 +114,12 @@ final class NtfsSessions {
             throw NtfsSession.SessionError(message: "paths containing quotes aren’t supported")
         }
 
-        if let err = await Ejector.unmount(bsd: bsd) {
+        if mounted, let err = await Ejector.unmount(bsd: bsd) {
             try? FileManager.default.removeItem(at: stage)
             throw NtfsSession.SessionError(message: "Couldn’t unmount from macOS (close any windows using it): \(err)")
         }
         let session = NtfsSession(bsd: bsd, title: title, stage: canonical)
+        session.wasMounted = mounted
         do {
             // Least privilege: only ask for administrator rights if the device node isn't already ours (disk images are).
             let direct = access("/dev/\(bsd)", R_OK | W_OK) == 0
@@ -147,14 +151,15 @@ final class NtfsSessions {
             _ = try session.call(["op": "ping"])
             // surface a refusal (dirty / hibernated volume) now instead of at the first paste
             struct L: Decodable { let write_blocked: String? }
-            if let why = try session.callOK(["op": "list", "path": "/"], as: L.self).write_blocked {
+            let first = try session.callOK(["op": "list", "path": "/"], as: L.self)
+            if mounted, let why = first.write_blocked {   // raw read-only browsing of a dirty volume is still fine
                 throw NtfsSession.SessionError(message: "Can’t write safely: \(why)")
             }
         } catch {
             session.close()
             _ = try? session.call(["op": "quit"])
             try? FileManager.default.removeItem(at: stage)
-            _ = await Ejector.mount(bsd: bsd)
+            if mounted { _ = await Ejector.mount(bsd: bsd) }
             throw error
         }
         active[bsd] = session
@@ -170,13 +175,14 @@ final class NtfsSessions {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         try? FileManager.default.removeItem(at: s.stage)
-        return await Ejector.mount(bsd: bsd)
+        return s.wasMounted ? await Ejector.mount(bsd: bsd) : nil
     }
 
     private func endAllSync() {
         for (bsd, s) in active {
             _ = try? s.call(["op": "quit"]); s.close()
             try? FileManager.default.removeItem(at: s.stage)
+            guard s.wasMounted else { continue }
             let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil"); p.arguments = ["mount", "/dev/\(bsd)"]
             p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
             try? p.run(); p.waitUntilExit()

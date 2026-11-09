@@ -30,6 +30,9 @@ pub struct FatFs {
     fsinfo_sector: u64,   // FAT32 only, 0 if absent
     /// Serialises all mutation (and the allocation hint).
     wlock: Mutex<u32>,
+    /// Read cursor `(first cluster of the file, chain index, cluster)`: lets sequential reads resume instead of
+    /// re-walking the chain from the start of the file on every call. Cleared by every mutation.
+    cursor: Mutex<(u32, u64, u32)>,
 }
 
 fn le16(b: &[u8], o: usize) -> u64 { u16::from_le_bytes([b[o], b[o + 1]]) as u64 }
@@ -74,6 +77,7 @@ impl FatFs {
             nfats, fat_bytes: fat_sz * bps,
             fsinfo_sector: if kind == FatKind::Fat32 { le16(&s, 48) } else { 0 },
             wlock: Mutex::new(2),
+            cursor: Mutex::new((0, 0, 0)),
         };
         // A volume-label entry in the root directory overrides the BPB label.
         if let Ok(root) = fs.dir_bytes(DirLoc::Root) {
@@ -303,17 +307,40 @@ impl Filesystem for FatFs {
         let want = (buf.len() as u64).min(entry.size - offset) as usize;
         let cs = self.cluster_size();
         let first = entry.inode as u32;
-        let mut c = self.nth_cluster(first, offset / cs)?.ok_or(FsError::Corrupt("file shorter than its size"))?;
+        // Resume from the cursor when this continues a sequential read of the same file.
+        let target = offset / cs;
+        let (mut idx, mut c) = {
+            let cur = self.cursor.lock().unwrap();
+            if cur.0 == first && cur.0 != 0 && cur.1 <= target { (cur.1, cur.2) } else { (0, first) }
+        };
+        while idx < target {
+            c = self.next_cluster(c)?.ok_or(FsError::Corrupt("file shorter than its size"))?;
+            idx += 1;
+        }
         let mut within = offset % cs;
         let mut done = 0usize;
+        let (mut last, mut last_idx) = (c, idx);
         while done < want {
-            let n = ((cs - within) as usize).min(want - done);
+            // Extend over physically contiguous clusters so one read covers the whole run.
+            last = c; last_idx = idx;
+            let (mut avail, mut next) = (cs - within, None);
+            while (avail as usize) < want - done {
+                match self.next_cluster(last)? {
+                    Some(n) if n == last + 1 => { last = n; last_idx += 1; avail += cs; }
+                    Some(n) => { next = Some(n); break; }
+                    None => return Err(FsError::Corrupt("file shorter than its size")),
+                }
+            }
+            let n = (avail as usize).min(want - done);
             self.dev.read_at(self.cluster_offset(c) + within, &mut buf[done..done + n])?;
             done += n; within = 0;
             if done < want {
-                c = self.next_cluster(c)?.ok_or(FsError::Corrupt("file shorter than its size"))?;
+                c = next.ok_or(FsError::Corrupt("file shorter than its size"))?;
+                idx = last_idx + 1;
             }
         }
+        // `last` holds the final byte just read: the next sequential read resumes here.
+        *self.cursor.lock().unwrap() = (first, last_idx, last);
         Ok(done)
     }
 }

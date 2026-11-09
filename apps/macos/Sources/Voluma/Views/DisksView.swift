@@ -108,6 +108,9 @@ struct DiskCard: View {
             if disk.isMounted && disk.children.isEmpty {
                 // Whole-disk filesystem (no partition map), e.g. a mounted image.
                 SpaceRow(node: disk, openLens: openLens, openBrowse: openBrowse)
+            } else if disk.rawBrowsable {
+                HStack { Spacer(); Button("Browse…", systemImage: "lock.open") { openBrowse(disk) }.controlSize(.small)
+                    .help("Read this disk with VOLUMA’s own drivers") }
             }
             if !isCollapsed {
                 ForEach(disk.children) { c in PartitionRow(node: c, collapsed: $collapsed, openLens: openLens, openBrowse: openBrowse) }
@@ -167,7 +170,11 @@ struct PartitionRow: View {
                 Spacer()
                 if node.isMounted { SpaceRow(node: node, openLens: openLens, openBrowse: openBrowse).frame(width: 400) }
                 else if node.children.isEmpty || node.total == nil {
-                    Text(formatBytes(node.size)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        if node.rawBrowsable { Button("Browse…", systemImage: "lock.open") { openBrowse(node) }.controlSize(.small)
+                            .help("Read this partition with VOLUMA’s own drivers (asks for your administrator password)") }
+                        Text(formatBytes(node.size)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 } else {
                     // APFS container: free space is shared by its volumes.
                     VStack(alignment: .trailing, spacing: 4) {

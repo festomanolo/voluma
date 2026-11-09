@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var place = Place(section: .disks, browse: nil)
     @State private var history: [Place] = []
     @State private var collapsedDisks: Set<String> = []
+    @State private var rawError: String?
     @State private var report: ImageReport?
     @State private var errorText: String?
     @State private var importing = false
@@ -57,7 +58,16 @@ struct ContentView: View {
                                       navigate(section: .lens)
                                   },
                                   openBrowse: { node in
-                                      guard let m = node.mountPath else { return }
+                                      guard let m = node.mountPath else {
+                                          // Unmounted partition: read it raw through the helper (admin prompt unless the device is ours).
+                                          Task { @MainActor in
+                                              do {
+                                                  _ = try await NtfsSessions.shared.start(bsd: node.bsd, title: node.title, mounted: false)
+                                                  navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, bsd: node.bsd, viaHelper: true, rawOnly: true))
+                                              } catch { rawError = error.localizedDescription }
+                                          }
+                                          return
+                                      }
                                       let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
                                       navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m,
                                                                     bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
@@ -91,6 +101,9 @@ struct ContentView: View {
             catch { report = nil; errorText = error.localizedDescription }
             navigate(section: .images)
         }
+        .alert("Couldn’t open the partition", isPresented: Binding(get: { rawError != nil }, set: { if !$0 { rawError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(rawError ?? "") }
         .frame(minWidth: 960, minHeight: 600)
     }
 }

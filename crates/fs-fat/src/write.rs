@@ -14,6 +14,7 @@ fn eoc(kind: FatKind) -> u32 { match kind { FatKind::Fat12 => 0xFFF, FatKind::Fa
 impl FatFs {
     // ---------- guards ----------
     fn require_writable(&self) -> Result<()> {
+        *self.cursor.lock().unwrap() = (0, 0, 0);   // any mutation may change cluster chains
         if self.dev.is_read_only() { return Err(FsError::Refused("volume opened read-only")); }
         if self.is_dirty()? { return Err(FsError::Refused("volume was not cleanly unmounted; check it with the OS repair tool first")); }
         Ok(())
@@ -62,6 +63,57 @@ impl FatFs {
             }
         }
         Ok(())
+    }
+
+    /// Writes consecutive FAT entries `first, first+1, ...` in one go per FAT copy (FAT16/32); FAT12 falls back.
+    fn write_fat_run(&self, first: u32, vals: &[u32]) -> Result<()> {
+        if vals.is_empty() { return Ok(()); }
+        if first < 2 || first as u64 + vals.len() as u64 > self.cluster_count as u64 + 2 { return Err(FsError::Corrupt("cluster out of range")); }
+        match self.kind {
+            FatKind::Fat12 => { for (i, v) in vals.iter().enumerate() { self.set_fat(first + i as u32, *v)?; } }
+            FatKind::Fat16 => {
+                let bytes: Vec<u8> = vals.iter().flat_map(|v| (*v as u16).to_le_bytes()).collect();
+                for f in 0..self.nfats { self.dev.write_at(self.fat_start + f * self.fat_bytes + first as u64 * 2, &bytes)?; }
+            }
+            FatKind::Fat32 => {
+                for f in 0..self.nfats {
+                    let at = self.fat_start + f * self.fat_bytes + first as u64 * 4;
+                    let mut b = vec![0u8; vals.len() * 4];
+                    self.dev.read_at(at, &mut b)?;   // keep each entry's reserved top nibble
+                    for (i, v) in vals.iter().enumerate() {
+                        let old = u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()) & 0xF000_0000;
+                        b[i * 4..i * 4 + 4].copy_from_slice(&(old | (v & 0x0FFF_FFFF)).to_le_bytes());
+                    }
+                    self.dev.write_at(at, &b)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Allocates `count` clusters as one new chain (linked to `prev` if given, last one end-of-chain). The FAT is only
+    /// touched after enough free clusters were found, so a full volume fails without side effects.
+    fn alloc_chain(&self, hint: &mut u32, prev: Option<u32>, count: usize) -> Result<Vec<u32>> {
+        let total = self.cluster_count;
+        let mut c = if *hint >= 2 && *hint < total + 2 { *hint } else { 2 };
+        let mut found: Vec<u32> = Vec::with_capacity(count);
+        for _ in 0..total {
+            if self.fat_raw(c)? == 0 { found.push(c); if found.len() == count { break; } }
+            c = if c + 1 < total + 2 { c + 1 } else { 2 };
+        }
+        if found.len() < count { return Err(FsError::NoSpace); }
+        *hint = if found[count - 1] + 1 < total + 2 { found[count - 1] + 1 } else { 2 };
+        // entry for found[i] is found[i+1]; the last one ends the chain. Write maximal runs of consecutive clusters at once.
+        let mut i = 0;
+        while i < count {
+            let mut j = i + 1;
+            while j < count && found[j] == found[j - 1] + 1 { j += 1; }
+            let vals: Vec<u32> = (i..j).map(|k| if k + 1 < count { found[k + 1] } else { eoc(self.kind) }).collect();
+            self.write_fat_run(found[i], &vals)?;
+            i = j;
+        }
+        if let Some(p) = prev { self.set_fat(p, found[0])?; }
+        Ok(found)
     }
 
     /// Allocates one cluster, marks it end-of-chain, optionally links `prev -> new`.
@@ -331,26 +383,33 @@ impl FatFs {
             if l.entry.kind == EntryKind::Directory { return Err(FsError::IsADirectory(path.into())); }
             if !overwrite { return Err(FsError::AlreadyExists(path.into())); }
         }
-        // 1. Stream data into freshly allocated clusters.
+        // 1. Stream data into freshly allocated clusters, a chunk (up to 256 clusters) at a time.
         let cs = self.cluster_size() as usize;
-        let mut buf = vec![0u8; cs];
+        let mut buf = vec![0u8; cs * 256];
         let (mut first, mut last, mut total) = (0u32, 0u32, 0u64);
         let stream: Result<()> = (|| loop {
             let mut n = 0;
-            while n < cs {
+            while n < buf.len() {
                 let k = src.read(&mut buf[n..]).map_err(|e| FsError::Source(e.to_string()))?;
                 if k == 0 { break; }
                 n += k;
             }
             if n == 0 { return Ok(()); }
             if total + n as u64 > u32::MAX as u64 { return Err(FsError::NoSpace); }
-            buf[n..].fill(0);
-            let c = self.alloc_cluster(&mut hint, if last != 0 { Some(last) } else { None })?;
-            if first == 0 { first = c; }
-            last = c;
-            self.dev.write_at(self.cluster_offset(c), &buf)?;
+            let need = n.div_ceil(cs);
+            buf[n..need * cs].fill(0);
+            let clusters = self.alloc_chain(&mut hint, if last != 0 { Some(last) } else { None }, need)?;
+            if first == 0 { first = clusters[0]; }
+            last = clusters[need - 1];
+            let mut i = 0;
+            while i < need {
+                let mut j = i + 1;
+                while j < need && clusters[j] == clusters[j - 1] + 1 { j += 1; }
+                self.dev.write_at(self.cluster_offset(clusters[i]), &buf[i * cs..j * cs])?;
+                i = j;
+            }
             total += n as u64;
-            if n < cs { return Ok(()); }
+            if n < buf.len() { return Ok(()); }
         })();
         if let Err(e) = stream { if first != 0 { let _ = self.free_chain(first); } return Err(e); }
 
