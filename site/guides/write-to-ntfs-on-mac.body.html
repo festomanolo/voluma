@@ -1,0 +1,48 @@
+<h1>How to write to an NTFS drive on a Mac</h1>
+<p class="meta">Updated {{DATE}} · 6 minute read · works without reformatting</p>
+<p>You plug in a Windows drive, open a folder, and Paste is greyed out. macOS can read NTFS but it mounts the volume read-only. This guide covers your real options and the free one that needs no reformatting.</p>
+
+<h2>Why macOS will not write to NTFS</h2>
+<p>NTFS is Microsoft's filesystem. Apple ships the ability to read it, and does not offer a supported way to write to it. That is why a Windows drive opens fine in Finder but refuses new files, renames and deletes. The drive is not damaged and nothing is wrong with your Mac.</p>
+
+<h2>Your options, honestly</h2>
+<table>
+<tr><th>Option</th><th>Cost</th><th>The catch</th></tr>
+<tr><td>Reformat the drive to exFAT</td><td>Free</td><td>Erases the drive. exFAT works on Mac and Windows, but not for a Windows system disk.</td></tr>
+<tr><td>A commercial NTFS driver (Paragon, Tuxera)</td><td>Paid</td><td>The drive shows up read-write in Finder. You pay, and you install a driver.</td></tr>
+<tr><td>macFUSE with ntfs-3g</td><td>Free</td><td>Needs a system extension that you must approve, and it can break after macOS updates.</td></tr>
+<tr><td>VOLUMA</td><td>Free</td><td>You work inside its window, not in Finder, and it asks for your password once per session.</td></tr>
+</table>
+
+<h2>Write to NTFS with VOLUMA</h2>
+<ol>
+<li><strong>Shut Windows down fully.</strong> Fast Startup leaves an NTFS drive hibernated, and VOLUMA refuses to write to it. Choose Shut down, not Restart or Sleep, or turn Fast Startup off.</li>
+<li><strong>Open the drive.</strong> In VOLUMA's Disks view, find the volume and press Browse. A banner says macOS mounted it read-only.</li>
+<li><strong>Press Enable Writing.</strong> VOLUMA unmounts the volume from macOS and asks for your administrator password. It starts a small helper that can see only that one drive.</li>
+<li><strong>Paste.</strong> Copy files from another drive or from Finder, then press Paste. New folders, renames and deletes work too. If a name already exists, the copy is called "name copy" and nothing is overwritten.</li>
+<li><strong>Press Finish and Remount.</strong> The drive goes back to macOS. Leaving the window ends the session the same way.</li>
+</ol>
+<figure class="shot"><img src="../../assets/img/ntfs-writing.webp" width="1250" height="900" alt="VOLUMA with an NTFS volume open and a green banner saying it is writing through VOLUMA's NTFS driver" loading="lazy"><figcaption>An NTFS volume during a writing session. The volume is unmounted from macOS until you finish.</figcaption></figure>
+
+<h2>How the write stays safe</h2>
+<p>An NTFS volume is a database of files, and a half-finished write can corrupt it. VOLUMA writes in an order that keeps the volume readable at every step: file data first, then the space bitmap, then the file record, and the folder entry last. If a copy fails partway, the space it used is released. While a session is open the volume's dirty flag is raised, and if an I/O error interrupts a write the flag stays raised so Windows will check the drive next time.</p>
+<p>The driver is tested against volumes created and inspected by the ntfs-3g project's own tools (<a href="https://github.com/tuxera/ntfs-3g" rel="noopener">ntfs-3g on GitHub</a>): its consistency checker must pass after every kind of change, and its reader must be able to open every file VOLUMA wrote. The suite also runs writes on 150 deliberately corrupted volumes to make sure none of them crash it.</p>
+
+<h2>When VOLUMA says no</h2>
+<p>These refusals protect your data. VOLUMA still lets you read the drive in every case.</p>
+<ul>
+<li><strong>The volume is marked dirty.</strong> Windows did not shut down cleanly. Plug the drive into a Windows PC and run chkdsk on it.</li>
+<li><strong>Windows is hibernated.</strong> A hiberfil.sys with a hibernation marker is on the drive. Boot Windows and shut it down completely.</li>
+<li><strong>The log is not clean.</strong> The NTFS journal still holds unfinished work. Let Windows replay it by mounting the drive there.</li>
+<li><strong>Could not unmount.</strong> Something still uses the volume. Close Finder windows and apps that opened files on it, then try again.</li>
+</ul>
+
+<h2>How fast is it?</h2>
+<p>On disk images with a warm cache, VOLUMA writes a 256 MB file to NTFS at about 2,100 MB/s, against about 200 MB/s for ntfs-3g's own copy tool. A real drive is limited by the drive, usually to well under that, so treat these as a measure of driver overhead. The method and the raw numbers are in the <a href="../../#benchmarks">benchmarks</a>.</p>
+
+<h2>What is and is not supported</h2>
+<p>You can create, overwrite, delete and rename files and folders, including large folders with thousands of entries. VOLUMA does not write compressed or encrypted NTFS files, files with several hard links, or alternate data streams, and it does not make the drive appear in Finder.</p>
+<div class="callout"><p><strong>Back up first.</strong> The NTFS driver is checked against ntfs-3g's consistency tools and against deliberately corrupted disks. It has not been checked with Windows chkdsk. For a drive that holds the only copy of something, keep another copy.</p></div>
+<h2>After you finish</h2>
+<p>Press Finish and Remount before unplugging. VOLUMA returns the volume to macOS, which then lets you eject it as usual. If the drive is going back to a Windows machine, a quick chkdsk there is cheap insurance.</p>
+<p>Want the numbers? See the <a href="../../#benchmarks">benchmarks</a>. Looking to put a Windows installer on a USB stick instead? That is a different job, and <a href="/ndaga-fijo/">Ndaga Fijo</a> does it.</p>

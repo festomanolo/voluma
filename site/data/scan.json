@@ -1,0 +1,48 @@
+{
+ "results": [
+  {
+   "label": "applications",
+   "VOLUMA": {
+    "seconds": [
+     2.6,
+     2.82,
+     2.639
+    ],
+    "bytes": 37270417408,
+    "files": 383866,
+    "peak_rss_mb": 83,
+    "unreadable": 14,
+    "median": 2.639
+   },
+   "du": {
+    "seconds": [
+     8.748,
+     12.131,
+     8.88
+    ],
+    "bytes": 37270417408,
+    "median": 8.88
+   }
+  },
+  {
+   "label": "volume",
+   "VOLUMA": {
+    "seconds": [
+     50.344
+    ],
+    "bytes": 150955237376,
+    "files": 3340826,
+    "peak_rss_mb": 541,
+    "unreadable": 5,
+    "median": 50.344
+   },
+   "du": {
+    "seconds": [
+     243.005
+    ],
+    "bytes": 150955343872,
+    "median": 243.005
+   }
+  }
+ ]
+}

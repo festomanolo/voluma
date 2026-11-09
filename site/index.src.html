@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Write to NTFS on Mac: VOLUMA, Free Filesystem Explorer</title>
+<meta name="description" content="VOLUMA is a free macOS app that reads and writes NTFS, exFAT and FAT drives and browses ext4, APFS and HFS+. Copy between drives and see where your space went.">
+<link rel="canonical" href="https://festomanolo.com/voluma/">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="author" content="Festo Kasalu Magembe">
+<meta name="keywords" content="write to NTFS on Mac, NTFS for Mac free, read ext4 on Mac, Mac filesystem explorer, macOS disk explorer, NTFS write macOS Tahoe, Paragon NTFS alternative, Tuxera NTFS alternative, read Linux drive on Mac, disk usage analyzer Mac, storage analyzer macOS, copy files to NTFS drive Mac, read APFS HFS+ ext4 NTFS exFAT">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="VOLUMA">
+<meta property="og:title" content="Write to NTFS on Mac: VOLUMA, Free Filesystem Explorer">
+<meta property="og:description" content="Read and write NTFS, exFAT and FAT. Browse ext4, APFS and HFS+. Copy between drives, eject safely, and scan {{SCAN_HEADLINE}}. Native macOS, free.">
+<meta property="og:url" content="https://festomanolo.com/voluma/">
+<meta property="og:image" content="https://festomanolo.com/voluma/assets/img/og-image.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="VOLUMA app window listing a Mac's disks, partitions and free space">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Write to NTFS on Mac: VOLUMA, Free Filesystem Explorer">
+<meta name="twitter:description" content="Read and write NTFS, exFAT and FAT on macOS. Browse ext4, APFS and HFS+. Free.">
+<meta name="twitter:image" content="https://festomanolo.com/voluma/assets/img/og-image.png">
+<meta name="twitter:image:alt" content="VOLUMA app window listing a Mac's disks, partitions and free space">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="preload" as="image" href="assets/img/disks.webp" type="image/webp" fetchpriority="high">
+<link rel="stylesheet" href="assets/style.css">
+<script>document.documentElement.className="js"</script>
+<noscript><style>.js .rv{opacity:1;transform:none}.js .bar{transform:none}</style></noscript>
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@graph":[
+    {
+      "@type":"SoftwareApplication",
+      "@id":"https://festomanolo.com/voluma/#app",
+      "name":"VOLUMA",
+      "alternateName":["VOLUMA for Mac","VOLUMA filesystem explorer"],
+      "description":"A native macOS app that reads and writes NTFS, exFAT and FAT volumes, browses ext4, APFS and HFS+, copies files between drives and analyses where disk space went.",
+      "applicationCategory":"UtilitiesApplication",
+      "applicationSubCategory":"Disk and filesystem utility",
+      "operatingSystem":"macOS 14 or later",
+      "softwareVersion":"{{VERSION}}",
+      "datePublished":"{{DATE}}",
+      "dateModified":"{{DATE}}",
+      "fileSize":"{{ZIP_SIZE}}",
+      "license":"https://opensource.org/licenses/MIT",
+      "url":"https://festomanolo.com/voluma/",
+      "downloadUrl":"https://festomanolo.com/voluma/downloads/{{ZIP_NAME}}",
+      "image":"https://festomanolo.com/voluma/assets/img/og-image.png",
+      "screenshot":["https://festomanolo.com/voluma/assets/img/disks.webp","https://festomanolo.com/voluma/assets/img/lens.webp","https://festomanolo.com/voluma/assets/img/ntfs-writing.webp"],
+      "author":{"@id":"https://festomanolo.com/#author"},
+      "publisher":{"@id":"https://festomanolo.com/#author"},
+      "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+      "featureList":[
+        "Writes to NTFS volumes that macOS mounts read-only",
+        "Reads and writes exFAT and FAT12, FAT16 and FAT32",
+        "Browses ext2, ext3 and ext4, APFS and HFS+ volumes",
+        "Copies and pastes files between any two drives, and with Finder",
+        "Storage Lens shows where disk space went, scanning millions of files in about a minute",
+        "Safe eject for external drives",
+        "Refuses to write to dirty or hibernated NTFS volumes"
+      ]
+    },
+    {
+      "@type":"WebPage","@id":"https://festomanolo.com/voluma/#page","url":"https://festomanolo.com/voluma/","name":"VOLUMA: read and write NTFS, exFAT, FAT and browse ext4, APFS and HFS+ on Mac",
+      "isPartOf":{"@id":"https://festomanolo.com/#website"},"about":{"@id":"https://festomanolo.com/voluma/#app"},"inLanguage":"en","datePublished":"{{DATE}}","dateModified":"{{DATE}}"
+    },
+    {
+      "@type":"BreadcrumbList","itemListElement":[
+        {"@type":"ListItem","position":1,"name":"Festo Kasalu Magembe","item":"https://festomanolo.com/"},
+        {"@type":"ListItem","position":2,"name":"VOLUMA","item":"https://festomanolo.com/voluma/"}]
+    },
+    {
+      "@type":"Dataset","@id":"https://festomanolo.com/voluma/#benchmarks","name":"VOLUMA filesystem driver and storage scan benchmarks",
+      "description":"Read and write throughput of VOLUMA's filesystem drivers compared with macOS and reference implementations, and folder scan time compared with du.",
+      "url":"https://festomanolo.com/voluma/#benchmarks","creator":{"@id":"https://festomanolo.com/#author"},"license":"https://opensource.org/licenses/MIT",
+      "distribution":{"@type":"DataDownload","encodingFormat":"application/json","contentUrl":"https://festomanolo.com/voluma/data/results.json"},
+      "measurementTechnique":"Median of three runs on disk images with a warm page cache; scan timings on a real 195 GB volume."
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="VOLUMA home"><img src="assets/img/icon-128.png" alt="" width="30" height="30">VOLUMA</a>
+    <nav aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#ntfs">NTFS</a>
+      <a href="#benchmarks">Benchmarks</a>
+      <a href="#filesystems">Filesystems</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn primary small" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Read and write every drive on your Mac</h1>
+      <p class="lead">A native macOS explorer for NTFS, exFAT, FAT, ext4, APFS and HFS+. Browse, copy between drives, and write to NTFS.</p>
+      <div class="cta">
+        <a class="btn primary" href="#download">{{ICON:download-simple}} Download for Mac</a>
+        <a class="btn" href="#benchmarks">See the benchmarks</a>
+      </div>
+    </div>
+    <div class="rv" style="position:relative">
+      <div class="glow" aria-hidden="true"></div>
+      <div class="window"><img src="assets/img/disks.webp" width="1250" height="900" alt="VOLUMA listing a Mac's internal disk, an external drive and mounted disk images, each with capacity and free space" fetchpriority="high" decoding="async"></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" aria-label="Supported filesystems">
+  <div class="wrap">
+    <div class="band-grid rv">
+      <div class="band-col">
+        <p class="col-title">Read and write</p>
+        <div class="fs-pills"><span class="pill rw">NTFS</span><span class="pill rw">exFAT</span><span class="pill rw">FAT32</span><span class="pill rw">FAT16</span><span class="pill rw">FAT12</span></div>
+      </div>
+      <div class="band-col">
+        <p class="col-title">Read</p>
+        <div class="fs-pills"><span class="pill">ext4</span><span class="pill">ext3</span><span class="pill">ext2</span><span class="pill">APFS</span><span class="pill">HFS+</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>One window for every disk</h2>
+      <p>Built from the operating system's own disk APIs, with drivers that read the filesystems themselves.</p>
+    </div>
+    <div class="bento">
+      <article class="cell c-a rv">
+        {{ICON_LG:hard-drives}}
+        <h3>Your whole machine as a tree</h3>
+        <p>Disks, partitions, APFS containers and volumes with capacity and free space. Collapse what you do not need and the tree remembers its shape.</p>
+        <div class="shot"><img src="assets/img/disks-tree.webp" width="1028" height="660" alt="Expanded disk tree showing an APFS container with its volumes and free space bars" loading="lazy" decoding="async"></div>
+      </article>
+      <article class="cell c-b tint rv" style="--d:.08s">
+        {{ICON_LG:chart-donut}}
+        <h3>Storage Lens</h3>
+        <p>See what is using your space by type, then drill into folders like Finder.</p>
+        <div class="shot"><img src="assets/img/lens-crop.webp" width="1028" height="84" alt="Storage Lens category bar splitting used space into applications, documents, images, video, audio and archives" loading="lazy" decoding="async"></div>
+      </article>
+      <article class="cell c-c rv" style="--d:.16s">
+        {{ICON_LG:copy}}
+        <h3>Copy and paste between drives</h3>
+        <p>Paste into NTFS, exFAT or FAT from another drive or from Finder. A name clash never overwrites.</p>
+      </article>
+      <article class="cell c-d rv">
+        {{ICON_LG:eject}}
+        <h3>Eject from the same screen</h3>
+        <p>One click unmounts every volume on an external drive and ejects it. The internal disk never gets the button.</p>
+      </article>
+      <article class="cell c-e tint rv" style="--d:.08s">
+        <div class="bignum">{{TESTS}}</div>
+        <h3>Automated test functions</h3>
+        <p>Each driver is checked against volumes made by macOS, ntfs-3g or e2fsprogs, then fuzzed with corrupted disks.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="ntfs">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>Write to NTFS without leaving the app</h2>
+      <p>macOS mounts NTFS drives read-only, so Paste is greyed out. VOLUMA writes to them with its own driver.</p>
+    </div>
+    <div class="story">
+      <div class="steps" id="steps">
+        <div class="step on" data-frame="0">
+          <h3>Open the drive</h3>
+          <p>VOLUMA notices that macOS mounted the volume read-only and says so, with one button to change that.</p>
+        </div>
+        <div class="step" data-frame="1">
+          <h3>Enable writing</h3>
+          <p>It unmounts the volume from macOS and asks for your administrator password once. Drives that Windows left dirty or hibernated are refused.</p>
+        </div>
+        <div class="step" data-frame="2">
+          <h3>Paste, then give it back</h3>
+          <p>Files go in through VOLUMA's NTFS driver. Finish, and the drive returns to macOS.</p>
+        </div>
+      </div>
+      <div class="stage" id="stage">
+        <div class="window">
+          <div class="frame on"><img src="assets/img/ntfs-readonly.webp" width="1250" height="900" alt="NTFS volume opened in VOLUMA with a banner saying macOS mounted it read-only and an Enable Writing button" loading="lazy" decoding="async"></div>
+          <div class="frame"><img src="assets/img/ntfs-confirm.webp" width="1250" height="900" alt="Confirmation dialog explaining the volume will be unmounted and an administrator password requested" loading="lazy" decoding="async"></div>
+          <div class="frame"><img src="assets/img/ntfs-writing.webp" width="1250" height="900" alt="NTFS volume in VOLUMA after pasting a file, with a green banner saying it is writing through VOLUMA's NTFS driver" loading="lazy" decoding="async"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="benchmarks">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>Measured, not claimed</h2>
+      <p>{{BENCH_INTRO}}</p>
+    </div>
+    <div class="kpis rv">
+      {{KPIS}}
+    </div>
+    <div class="charts">
+      {{CHARTS}}
+    </div>
+    <p class="method rv">{{METHOD}}</p>
+  </div>
+</section>
+
+<section id="filesystems">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>What each filesystem can do</h2>
+      <p>Support is listed only where it has been built and tested.</p>
+    </div>
+    <div class="fs-panels">
+      <div class="fs-panel rw rv">
+        <h3>Read and write</h3>
+        <div class="fs"><b>NTFS</b><p>Create, overwrite, delete, rename and move files and folders. Large directories, MFT growth, and refusal of dirty or hibernated volumes.</p><span class="proof">Checked by ntfs-3g: ntfsresize, ntfscat, ntfsls</span></div>
+        <div class="fs"><b>exFAT</b><p>Files and folders with long and Unicode names, directory growth, and rollback when a drive fills up.</p><span class="proof">Checked by macOS fsck_exfat and a read-only mount</span></div>
+        <div class="fs"><b>FAT32, FAT16, FAT12</b><p>Long names, nested folders, moves that fix up parent links. Refuses volumes that were not cleanly unmounted.</p><span class="proof">Checked by macOS fsck_msdos and a read-only mount</span></div>
+      </div>
+      <div class="fs-panel rv" style="--d:.08s">
+        <h3>Read only</h3>
+        <div class="fs"><b>ext2, ext3, ext4</b><p>Extents, 64-bit, flex_bg, sparse files and symlinks. Refuses volumes that need journal recovery.</p><span class="proof">Checked by e2fsck-clean images from mke2fs</span></div>
+        <div class="fs"><b>APFS</b><p>Newest checkpoint, checksum on every object, case-sensitive volumes, hard links and symlinks.</p><span class="proof">Compared byte for byte with a macOS mount</span></div>
+        <div class="fs"><b>HFS+ and HFSX</b><p>Hard links, files with many extents, and refusal of volumes with an unreplayed journal.</p><span class="proof">Compared byte for byte with a macOS mount</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap safe">
+    <div class="rv">
+      <h2>Built to say no</h2>
+      <p class="lead" style="margin-top:16px">Writing to a drive you cannot easily back up deserves caution, so VOLUMA refuses before it risks anything.</p>
+      <div class="honest"><b>Honest status.</b> NTFS writing is verified against ntfs-3g, not against Windows. Run chkdsk on Windows before you trust a drive that holds the only copy of something.</div>
+    </div>
+    <div class="safe-list">
+      <div class="safe-item rv">{{ICON:shield-check}}<div><h3>Dirty and hibernated volumes are refused</h3><p>If Windows did not shut down cleanly, or Fast Startup left the drive hibernated, VOLUMA reads but will not write.</p></div></div>
+      <div class="safe-item rv" style="--d:.06s">{{ICON:lock-key-open}}<div><h3>A helper that can only see one drive</h3><p>The privileged helper serves a single device over a private socket, and touches files only by name inside a staging folder.</p></div></div>
+      <div class="safe-item rv" style="--d:.12s">{{ICON:copy}}<div><h3>Paste never overwrites</h3><p>If a name already exists, the copy becomes "name copy". Nothing is replaced behind your back.</p></div></div>
+      <div class="safe-item rv" style="--d:.18s">{{ICON:warning-circle}}<div><h3>A failed write leaves no mess</h3><p>Space is released when a copy fails halfway, and the volume keeps its dirty flag after an I/O error so Windows can check it.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="dl rv">
+      <div>
+        <img class="appicon" src="assets/img/icon-128.png" width="84" height="84" alt="VOLUMA app icon">
+        <h2>Download VOLUMA</h2>
+        <p class="muted">Version {{VERSION}} for macOS 14 or later. {{ARCH_NOTE}} Free, MIT licensed.</p>
+        <div class="cta">
+          <a class="btn primary" href="downloads/{{ZIP_NAME}}" download>{{ICON:download-simple}} Download ({{ZIP_SIZE}})</a>
+          <a class="btn" href="#faq">Read the FAQ</a>
+        </div>
+        <p class="sha">SHA-256 {{SHA256}}</p>
+      </div>
+      <ol>
+        <li>Unzip and drag <code>VOLUMA.app</code> to Applications.</li>
+        <li>The build is not notarised yet. Right-click the app and choose Open the first time, or run <code>xattr -cr /Applications/VOLUMA.app</code>.</li>
+        <li>Writing to an external NTFS drive asks for your administrator password once per session.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="sec-head rv"><h2>Questions</h2></div>
+    <div class="faq rv">
+      <details><summary>Can I write to an NTFS drive on a Mac?</summary><p>Yes, with VOLUMA. macOS itself mounts NTFS read-only. VOLUMA unmounts the volume, asks for your administrator password, and writes through its own NTFS driver, then returns the drive to macOS. It refuses drives that Windows left dirty or hibernated.</p></details>
+      <details><summary>Is VOLUMA free?</summary><p>Yes. It is free to download and use, under the MIT licence. There is no account and no network access.</p></details>
+      <details><summary>Can I read ext4 and other Linux drives on a Mac?</summary><p>Yes, read-only. VOLUMA browses and copies files out of ext2, ext3 and ext4 volumes, on disk images and on unmounted partitions. For a live partition it uses the same administrator-approved helper as NTFS writing, and it never writes to ext4.</p></details>
+      <details><summary>Does VOLUMA mount drives in Finder?</summary><p>No. It browses, copies and writes inside its own window and gives mounted volumes back to macOS afterwards. If you need a drive to appear in Finder while writing, that is not something this release does.</p></details>
+      <details><summary>How is this different from Paragon or Tuxera NTFS for Mac?</summary><p>Those products are commercial drivers that mount an NTFS drive read-write in Finder. VOLUMA is a free app with its own driver: you browse and paste inside it, and it asks for permission each session. It is younger, so back up first.</p></details>
+      <details><summary>Is it safe to write to my NTFS drive?</summary><p>The driver is tested against images made and checked by ntfs-3g, including corrupted disks, and it refuses unsafe volumes. It has not been checked with Windows chkdsk. Keep a backup of anything you cannot replace.</p></details>
+      <details><summary>Is VOLUMA a disk image writer for bootable USB drives?</summary><p>No. VOLUMA reads and writes files inside filesystems. To flash a Windows or Linux ISO onto a USB drive, use <a href="/ndaga-fijo/">Ndaga Fijo</a>.</p></details>
+      <details><summary>Does it run on Apple Silicon?</summary><p>{{ARCH_FAQ}}</p></details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="./"><img src="assets/img/icon-128.png" alt="" width="30" height="30">VOLUMA</a>
+      <p style="margin-top:14px;max-width:34ch">A filesystem explorer for macOS by Festo Kasalu Magembe.</p>
+    </div>
+    <div>
+      <p class="foot-title">On this site</p>
+      <ul><li><a href="/">festomanolo.com</a></li><li><a href="/#projects">More projects</a></li><li><a href="/ndaga-fijo/">Ndaga Fijo, bootable USB maker</a></li><li><a href="/gitnolo/">gitnolo</a></li></ul>
+    </div>
+    <div>
+      <p class="foot-title">VOLUMA</p>
+      <ul><li><a href="#download">Download</a></li><li><a href="#benchmarks">Benchmarks</a></li><li><a href="data/results.json">Raw benchmark data</a></li><li><a href="mailto:festomanolo@icloud.com">Contact</a></li></ul>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js" defer></script>
+</body>
+</html>

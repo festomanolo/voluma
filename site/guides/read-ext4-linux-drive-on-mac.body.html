@@ -1,0 +1,47 @@
+<h1>How to read an ext4 Linux drive on a Mac</h1>
+<p class="meta">Updated {{DATE}} · 5 minute read · read-only, nothing is modified</p>
+<p>Linux drives use ext4, and macOS cannot open them. Connect one and macOS offers to initialise it, which would erase everything. Do not click that. Here is how to read the files instead.</p>
+
+<h2>Why macOS cannot read ext4</h2>
+<p>ext4 is the default filesystem on most Linux systems, and macOS has no driver for it. A drive formatted ext4 shows up in Disk Utility as unreadable, and macOS suggests initialising it, which would erase it. Nothing is wrong with the drive. It just speaks a language macOS does not.</p>
+
+<h2>Your options</h2>
+<table>
+<tr><th>Option</th><th>Cost</th><th>The catch</th></tr>
+<tr><td>A commercial Linux file system driver</td><td>Paid</td><td>Mounts the drive in Finder, often read-write.</td></tr>
+<tr><td>macFUSE with an ext4 plugin</td><td>Free</td><td>Needs a system extension that you must approve, and macOS updates can break it.</td></tr>
+<tr><td>A Linux virtual machine</td><td>Free</td><td>Needs USB passthrough and setup time.</td></tr>
+<tr><td>VOLUMA</td><td>Free</td><td>Read-only, inside its own window. You copy files out.</td></tr>
+</table>
+
+<h2>Read an ext4 drive with VOLUMA</h2>
+<ol>
+<li><strong>Click Ignore</strong> if macOS asks to initialise the disk.</li>
+<li><strong>Find the partition.</strong> In VOLUMA's Disks view it appears as an unmounted partition, often labelled Linux Filesystem. Press Browse.</li>
+<li><strong>Enter your administrator password.</strong> Reading a raw partition needs it. VOLUMA starts a small helper that can see only that partition.</li>
+<li><strong>Browse and copy out.</strong> Open folders like in Finder, select files, press Copy, then paste them into a folder on a Mac volume or into Finder.</li>
+<li><strong>Press Close.</strong> The helper stops. macOS never mounted the drive, so there is nothing to remount.</li>
+</ol>
+<p>You can also open a disk image of an ext4 volume with Open Disk Image, which needs no password.</p>
+<figure class="shot"><img src="../../assets/img/ext4-browse.webp" width="1250" height="900" alt="VOLUMA browsing an ext4 volume read-only through its own driver" loading="lazy"><figcaption>An ext4 volume opened read-only. Copy works, writing is switched off.</figcaption></figure>
+
+<h2>Copying files out safely</h2>
+<p>Copy from the Linux drive and paste into any folder on a Mac volume, or into Finder. Files arrive owned by you. Linux ownership and permission bits are not carried across, and a symbolic link arrives as a small file that holds the link's target path, because macOS has no use for a link into another machine's filesystem. VOLUMA stages each file in a temporary folder while it copies, so keep free space for one extra copy of your largest file.</p>
+
+<h2>If something does not work</h2>
+<ul>
+<li><strong>No Browse button.</strong> The button appears only for partitions macOS has not mounted. If macOS mounted the drive, browse it from the Disks view like any other volume.</li>
+<li><strong>"No driver yet".</strong> The partition holds a filesystem VOLUMA cannot read, such as Btrfs, XFS or an encrypted volume.</li>
+<li><strong>The password prompt was cancelled.</strong> Reading a raw partition needs administrator access. Press Browse again and approve it.</li>
+<li><strong>"Needs journal recovery".</strong> Linux was not shut down cleanly. Boot it and shut down properly, then try again.</li>
+</ul>
+
+<h2>What works and what does not</h2>
+<ul>
+<li><strong>Works:</strong> ext2, ext3 and ext4, including extents, 64-bit sizes, large folders, sparse files and symbolic links.</li>
+<li><strong>Refused:</strong> a volume that needs its journal replayed, which means Linux did not shut down cleanly. Boot Linux and shut it down properly, then try again.</li>
+<li><strong>Not supported yet:</strong> encrypted volumes (LUKS), Btrfs and XFS, and any kind of writing to ext4.</li>
+</ul>
+<div class="callout"><p><strong>It never writes.</strong> The ext4 driver opens the drive read-only, so browsing and copying cannot change anything on it.</p></div>
+<p>The reader is checked against ext2, ext3 and ext4 images built by the e2fsprogs project (<a href="https://e2fsprogs.sourceforge.net/" rel="noopener">e2fsprogs</a>), whose consistency checker must call each image clean, and the suite runs the reader over damaged images to make sure it never crashes.</p>
+<p>Need to write to a Windows drive instead? See <a href="../write-to-ntfs-on-mac/">how to write to NTFS on a Mac</a>.</p>
