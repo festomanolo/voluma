@@ -367,6 +367,7 @@ dependencies = [
  "fs-apfs",
  "fs-core",
  "fs-exfat",
+ "fs-ext",
  "fs-fat",
  "partition-manager",
  "serde",
