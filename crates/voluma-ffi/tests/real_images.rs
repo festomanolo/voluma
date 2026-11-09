@@ -61,3 +61,33 @@ fn mutate_requires_driver_support_and_roundtrips() {
     assert!(json(voluma_ffi::mutate_json(&img, -1, "delete", "/made/out.txt", "", false)).get("ok").is_some());
     assert!(json(voluma_ffi::mutate_json(&img, -1, "bogus", "/", "", false)).get("error").is_some());
 }
+
+fn mac_fixture(fs: &str, mb: &str) -> Option<(tempfile::TempDir, String)> {
+    if !cfg!(target_os = "macos") { eprintln!("SKIPPED: needs macOS hdiutil"); return None; }
+    let d = tempfile::tempdir().unwrap();
+    let img = d.path().join("t.img");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/make_mac_fixture.sh");
+    let o = Command::new("sh").args([script, img.to_str().unwrap(), fs, mb]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let p = img.to_str().unwrap().to_string();
+    Some((d, p))
+}
+
+#[test]
+fn browse_and_export_hfsplus_and_apfs_read_only() {
+    for (fs, kind, name) in [("HFS+", "hfs_plus", "HFS+"), ("APFS", "apfs", "APFS")] {
+        let Some((d, img)) = mac_fixture(fs, "64") else { return };
+        let v = json(voluma_ffi::inspect_image_json(&img));
+        assert_eq!(v["ok"]["whole_disk_filesystem"]["kind"], kind, "{v}");
+        let l = json(voluma_ffi::list_directory_json(&img, -1, "/docs"));
+        assert_eq!(l["ok"]["filesystem"], name, "{l}");
+        assert_eq!(l["ok"]["driver_supports_write"], false, "{l}");
+        assert!(l["ok"]["entries"].as_array().unwrap().iter().any(|e| e["name"] == "nested"), "{l}");
+        let dest = d.path().join("big.out");
+        let e = json(voluma_ffi::export_file_json(&img, -1, "/big.bin", dest.to_str().unwrap()));
+        assert_eq!(e["ok"]["bytes"], 3 * 1024 * 1024, "{e}");
+        // Writes are refused before the image is even opened writable by a driver.
+        let m = json(voluma_ffi::mutate_json(&img, -1, "mkdir", "/x", "", false));
+        assert!(m["error"].as_str().unwrap().contains("read-only"), "{m}");
+    }
+}
