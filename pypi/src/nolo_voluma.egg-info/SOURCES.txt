@@ -1,0 +1,17 @@
+LICENSE
+MANIFEST.in
+README.md
+pyproject.toml
+setup.py
+src/nolo_voluma/__init__.py
+src/nolo_voluma/cli.py
+src/nolo_voluma.egg-info/PKG-INFO
+src/nolo_voluma.egg-info/SOURCES.txt
+src/nolo_voluma.egg-info/dependency_links.txt
+src/nolo_voluma.egg-info/entry_points.txt
+src/nolo_voluma.egg-info/top_level.txt
+src/nolo_voluma/VOLUMA.app/Contents/Info.plist
+src/nolo_voluma/VOLUMA.app/Contents/Helpers/voluma-helper
+src/nolo_voluma/VOLUMA.app/Contents/MacOS/Voluma
+src/nolo_voluma/VOLUMA.app/Contents/Resources/AppIcon.icns
+src/nolo_voluma/VOLUMA.app/Contents/_CodeSignature/CodeResources
