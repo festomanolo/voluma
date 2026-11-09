@@ -115,6 +115,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-ext"
+version = "0.1.0"
+dependencies = [
+ "block-device",
+ "fs-core",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "fs-fat"
 version = "0.1.0"
 dependencies = [
