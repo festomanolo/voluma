@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "block-device"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "tempfile",
@@ -79,7 +79,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filesystem-detection"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "serde",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "fs-apfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "fs-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "serde",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "fs-exfat"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "fs-ext"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "fs-fat"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "fs-hfsplus"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "fs-ntfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "fs-core",
@@ -208,7 +208,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "partition-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "serde",
@@ -371,7 +371,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voluma-ffi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "block-device",
  "filesystem-detection",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "voluma-helper"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "serde_json",

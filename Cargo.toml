@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/block-device", "crates/partition-manager", "crates/filesystem-detection", "crates/voluma-ffi", "crates/fs-core", "crates/fs-fat", "crates/fs-exfat", "crates/fs-hfsplus", "crates/fs-ext", "crates/fs-apfs", "crates/fs-ntfs", "crates/voluma-helper"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 rust-version = "1.80"

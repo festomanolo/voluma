@@ -1,9 +1,9 @@
 {
- "version": "0.1.0",
+ "version": "0.1.1",
  "date": "2026-11-09",
- "zip_name": "Voluma-0.1.0-macos-universal.zip",
+ "zip_name": "Voluma-0.1.1-macos-universal.zip",
  "zip_size": "4.1 MB",
- "sha256": "f177504aaea53b27e85dfd53be3dc1c0d68a4bd383979878a9267260b5677243",
+ "sha256": "89a0a8d80694d032854537ed1da6114f64ab01c0282755482274ba2f6d738c6f",
  "tests": 71,
  "arch_note": "Universal build for Apple Silicon and Intel.",
  "arch_faq": "Yes. The download is a universal build with native Apple Silicon and Intel code. It was built and tested on an Intel Mac, and the Apple Silicon half has not yet been run on real Apple Silicon hardware, so please report anything odd."

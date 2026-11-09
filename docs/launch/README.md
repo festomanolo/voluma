@@ -3,7 +3,7 @@
 Drafts for the VOLUMA launch. Edit the voice to taste, but keep the numbers: every one comes from `tests/bench` and is on https://festomanolo.com/voluma/#benchmarks.
 
 ## Before you post (blockers, in order)
-1. Push `main` and the `v0.1.0` tag, confirm the release page and `pip install nolo-voluma` work from a clean machine.
+1. Push `main` and the release tag, confirm the release page and `pip install nolo-voluma` work from a clean machine.
 2. Deploy the website bundle (`voluma-website-*.zip`) so the links and screenshots resolve.
 3. The demo GIF is recorded: `site/assets/img/demo.gif` (rebuild it with `site/make_demo_gif.py` from a frame capture). It is in the README and the NTFS guide; attach it to every post.
 4. Notarise the app if you can. Until then, say plainly that it is not notarised (the posts below do).
