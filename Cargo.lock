@@ -86,6 +86,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs-apfs"
+version = "0.1.0"
+dependencies = [
+ "block-device",
+ "fs-core",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "fs-core"
 version = "0.1.0"
 dependencies = [
