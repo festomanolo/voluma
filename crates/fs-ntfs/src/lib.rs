@@ -434,6 +434,7 @@ impl NtfsFs {
         for (mref, key) in self.dir_keys(dir)? {
             let Some(fnm) = parse_filename(&key) else { return Err(FsError::Corrupt("bad FILE_NAME in index")) };
             if fnm.ns == 2 { continue; } // DOS-only short name; the Win32 name is listed separately
+            if fnm.name == "." { continue; } // a directory's self-reference (Windows root directories carry one)
             if (mref & MFT_MASK) < 16 && (mref & MFT_MASK) != ROOT_REC { continue; } // $MFT, $Bitmap, ...
             v.push((fnm.name, fnm.units, mref & MFT_MASK));
         }

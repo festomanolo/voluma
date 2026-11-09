@@ -260,3 +260,21 @@ fn corrupted_volumes_never_panic_on_writes() {
         std::fs::remove_file(&p).unwrap();
     }
 }
+
+#[test]
+fn run_lengths_with_the_high_bit_set_are_encoded_signed() {
+    // 700000 bytes = 171 clusters = 0xAB: a one-byte length would read as negative to ntfs-3g/Windows.
+    let Some(img) = make(40, 4096) else { return };
+    {
+        let fs = rw(&img.path);
+        fs.create_dir("/pasted").unwrap();
+        fs.write_file("/pasted/big.bin", &mut Cursor::new(vec![0x5Au8; 700_000]), false).unwrap();
+        fs.rename("/pasted/big.bin", "/pasted/renamed.bin").unwrap();
+        fs.write_file("/pasted/128.bin", &mut Cursor::new(vec![1u8; 128 * 4096]), false).unwrap();
+        fs.write_file("/pasted/255.bin", &mut Cursor::new(vec![2u8; 255 * 4096 - 7]), false).unwrap();
+    }
+    check_consistent(&img.path);
+    same(&ntfscat(&img.path, "/pasted/renamed.bin"), vec![0x5Au8; 700_000], "171-cluster file");
+    same(&ntfscat(&img.path, "/pasted/128.bin"), vec![1u8; 128 * 4096], "128-cluster file");
+    same(&ntfscat(&img.path, "/pasted/255.bin"), vec![2u8; 255 * 4096 - 7], "255-cluster file");
+}

@@ -58,7 +58,9 @@ struct ContentView: View {
                                   },
                                   openBrowse: { node in
                                       guard let m = node.mountPath else { return }
-                                      navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m))
+                                      let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
+                                      navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m,
+                                                                    bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
                                   })
                     case .lens: LensView(model: lens, monitor: monitor)
                     case .images: ImageInspectorView(report: report, error: errorText, open: { importing = true },
@@ -69,6 +71,10 @@ struct ContentView: View {
             .navigationTitle(place.browse?.title ?? place.section.rawValue)
         }
         .environmentObject(nav)
+        .onAppear {
+            nav.replaceBrowse = { t in place.browse = t }
+            nav.closeBrowser = { if let p = history.popLast() { place = p } else { place = Place(section: .disks, browse: nil) } }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }

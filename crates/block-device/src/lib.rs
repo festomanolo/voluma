@@ -44,17 +44,34 @@ pub struct ImageDevice {
     read_only: bool,
 }
 
+/// Size of a regular file, or of a block/character device (whose `metadata().len()` is 0).
+fn device_size(file: &File) -> io::Result<u64> {
+    use std::os::unix::io::AsRawFd;
+    let len = file.metadata()?.len();
+    if len > 0 { return Ok(len); }
+    #[cfg(target_os = "macos")]
+    {
+        // DKIOCGETBLOCKSIZE / DKIOCGETBLOCKCOUNT
+        let (mut bs, mut count) = (0u32, 0u64);
+        let fd = file.as_raw_fd();
+        let ok = unsafe { libc::ioctl(fd, 0x4004_6418, &mut bs) == 0 && libc::ioctl(fd, 0x4008_6419, &mut count) == 0 };
+        if ok && bs > 0 { return Ok(bs as u64 * count); }
+    }
+    let _ = file.as_raw_fd();
+    Ok(0)
+}
+
 impl ImageDevice {
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
         let file = File::open(path)?;
-        let size = file.metadata()?.len();
+        let size = device_size(&file)?;
         Ok(Self { file, size, read_only: true })
     }
 
     /// Explicit write authorization: the caller must opt in by name.
     pub fn open_read_write(path: impl AsRef<Path>) -> Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
-        let size = file.metadata()?.len();
+        let size = device_size(&file)?;
         Ok(Self { file, size, read_only: false })
     }
 }

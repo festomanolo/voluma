@@ -198,6 +198,34 @@ enum Ejector {
         (DADissenterGetStatusString(d) as String?) ?? "error \(DADissenterGetStatus(d))"
     }
 
+    /// Unmounts one volume (not the whole disk). Returns an error message, or nil on success.
+    static func unmount(bsd: String) async -> String? {
+        await withCheckedContinuation { cont in
+            guard let session = DASessionCreate(kCFAllocatorDefault),
+                  let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsd) else { cont.resume(returning: "Couldn’t open \(bsd)"); return }
+            DASessionSetDispatchQueue(session, DispatchQueue.main)
+            let box = Unmanaged.passRetained(Box(session) { cont.resume(returning: $0) }).toOpaque()
+            DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { _, dissenter, ctx in
+                let b = Unmanaged<Box>.fromOpaque(ctx!).takeRetainedValue()
+                b.done(dissenter.map { Ejector.text($0) })
+            }, box)
+        }
+    }
+
+    /// Mounts a volume again. Returns an error message, or nil on success.
+    static func mount(bsd: String) async -> String? {
+        await withCheckedContinuation { cont in
+            guard let session = DASessionCreate(kCFAllocatorDefault),
+                  let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsd) else { cont.resume(returning: "Couldn’t open \(bsd)"); return }
+            DASessionSetDispatchQueue(session, DispatchQueue.main)
+            let box = Unmanaged.passRetained(Box(session) { cont.resume(returning: $0) }).toOpaque()
+            DADiskMount(disk, nil, DADiskMountOptions(kDADiskMountOptionDefault), { _, dissenter, ctx in
+                let b = Unmanaged<Box>.fromOpaque(ctx!).takeRetainedValue()
+                b.done(dissenter.map { Ejector.text($0) })
+            }, box)
+        }
+    }
+
     static func eject(bsd: String, completion: @escaping (String?) -> Void) {
         guard let session = DASessionCreate(kCFAllocatorDefault),
               let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsd) else { completion("Couldn’t open \(bsd)"); return }

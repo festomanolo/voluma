@@ -5,4 +5,8 @@ import SwiftUI
 final class NavState: ObservableObject {
     @Published var innerCanBack = false
     var innerBack: (() -> Void)?
+    /// Swap the open browser for another target without adding a history entry (used when NTFS writing is enabled).
+    var replaceBrowse: ((BrowseTarget) -> Void)?
+    /// Leave the browser and go back to the page it was opened from.
+    var closeBrowser: (() -> Void)?
 }

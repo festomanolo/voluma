@@ -6,6 +6,12 @@ struct BrowseTarget: Hashable {
     let image: String; let part: Int; let title: String
     /// Set for a mounted volume browsed natively (no disk image involved).
     var nativeRoot: String? = nil
+    var bsd: String? = nil
+    var fsKind: String? = nil
+    /// macOS mounted this volume read-only (e.g. NTFS), so native writes would fail.
+    var readOnlyMount = false
+    /// Writing goes through the privileged NTFS helper (volume unmounted from macOS).
+    var viaHelper = false
 }
 
 /// Finder-style browser for a disk image/partition (Rust engine) or a mounted volume (native).
@@ -33,12 +39,19 @@ struct BrowserView: View {
     @State private var renaming: Listing.Entry?
     @State private var renameText = ""
 
+    @State private var confirmNtfs = false
+    @State private var enablingNtfs = false
+
     private var backend: FSBackend {
+        if target.viaHelper, let b = target.bsd, let s = NtfsSessions.shared.session(for: b) { return HelperBackend(session: s) }
         if let r = target.nativeRoot { return NativeBackend(root: r) }
         return EngineBackend(image: target.image, part: target.part)
     }
-    private var isNative: Bool { target.nativeRoot != nil }
-    private var canWrite: Bool { isNative || writeUnlocked }
+    private var isNative: Bool { target.nativeRoot != nil && !target.viaHelper }
+    private var isHelper: Bool { target.viaHelper }
+    /// Mounted volumes behave like Finder unless macOS mounted them read-only; helper sessions are explicitly writable.
+    private var canWrite: Bool { (isNative && !target.readOnlyMount) || isHelper || writeUnlocked }
+    private var needsNtfsUnlock: Bool { isNative && target.readOnlyMount && target.fsKind == "ntfs" && target.bsd != nil }
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
     private var sorted: [Listing.Entry] {
         (listing?.entries ?? []).sorted(using: sortOrder).sorted { $0.isDir && !$1.isDir }
@@ -50,6 +63,8 @@ struct BrowserView: View {
         VStack(spacing: 0) {
             toolbarRow
             Divider()
+            if needsNtfsUnlock { ntfsBanner }
+            if isHelper { helperBanner }
             if let error {
                 ContentUnavailableView("Can't read folder", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if listing != nil && sorted.isEmpty {
@@ -65,6 +80,13 @@ struct BrowserView: View {
             }.padding(.horizontal, 14).padding(.vertical, 5)
         }
         .onAppear { load(); publishNav() }
+        .onDisappear { if isHelper, let b = target.bsd { Task { _ = await NtfsSessions.shared.end(bsd: b) } } }
+        .confirmationDialog("Enable writing to “\(target.title)”?", isPresented: $confirmNtfs, titleVisibility: .visible) {
+            Button("Unmount and Enable Writing") { enableNtfsWriting() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("macOS can only read NTFS. VOLUMA will unmount the volume from macOS, ask for your administrator password, and write with its own NTFS driver. It refuses volumes that Windows left dirty or hibernated. The volume is remounted in macOS when you leave this window. Back up anything important first.")
+        }
         .onChange(of: backStack) { _ in publishNav() }
         .confirmationDialog("Allow changes to this image?", isPresented: $confirmUnlock, titleVisibility: .visible) {
             Button("Allow Changes", role: .destructive) { writeUnlocked = true }
@@ -85,6 +107,51 @@ struct BrowserView: View {
             TextField("Name", text: $renameText)
             Button("Rename") { if let e = renaming { let n = renameText; run("Renamed to \(n)") { try backend.rename(joinPath(path, e.name), joinPath(path, n)) } }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+
+    private var ntfsBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill").foregroundStyle(.orange)
+            Text("macOS mounted this NTFS volume read-only.").font(.callout)
+            Spacer()
+            if enablingNtfs { ProgressView().controlSize(.small) }
+            Button("Enable Writing…") { confirmNtfs = true }.disabled(enablingNtfs)
+        }.padding(.horizontal, 14).padding(.vertical, 8).background(.orange.opacity(0.12))
+    }
+
+    private var helperBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pencil.circle.fill").foregroundStyle(.green)
+            Text("Writing through VOLUMA’s NTFS driver. The volume is unmounted from macOS until you finish.").font(.callout)
+            Spacer()
+            Button("Finish & Remount") { finishHelper() }
+        }.padding(.horizontal, 14).padding(.vertical, 8).background(.green.opacity(0.12))
+    }
+
+    func enableNtfsWriting() {
+        guard let bsd = target.bsd else { return }
+        enablingNtfs = true
+        status = "Unmounting and starting the NTFS helper…"
+        Task {
+            do {
+                _ = try await NtfsSessions.shared.start(bsd: bsd, title: target.title)
+                var t = target; t.viaHelper = true; t.readOnlyMount = false
+                enablingNtfs = false
+                nav.replaceBrowse?(t)
+            } catch {
+                enablingNtfs = false
+                status = "Couldn’t enable writing: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func finishHelper() {
+        guard let bsd = target.bsd else { return }
+        status = "Remounting in macOS…"
+        Task {
+            let err = await NtfsSessions.shared.end(bsd: bsd)
+            if let err { status = "Remount failed: \(err)" } else { nav.closeBrowser?() }
         }
     }
 
@@ -110,7 +177,7 @@ struct BrowserView: View {
                 Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }
                 Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
-            if !isNative {
+            if !isNative && !isHelper {
                 Button {
                     if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
                 } label: {

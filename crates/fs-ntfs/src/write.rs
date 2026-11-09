@@ -106,7 +106,9 @@ fn encode_runs(runs: &[Run]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut prev = 0i64;
     for r in runs {
-        let lb = { let mut n = 1; while n < 8 && (r.len >> (8 * n)) != 0 { n += 1; } n };
+        // NTFS reads the length as a SIGNED little-endian number: a top byte with its high bit set (e.g. 171 = 0xAB)
+        // needs an extra 0x00 byte, or ntfs-3g/Windows see a negative length and call the runlist corrupt.
+        let lb = { let mut n = 1; while n < 8 && r.len >= (1u64 << (8 * n - 1)) { n += 1; } n };
         match r.lcn {
             None => { out.push(lb as u8); out.extend_from_slice(&r.len.to_le_bytes()[..lb]); }
             Some(l) => {
@@ -1297,6 +1299,36 @@ impl NtfsFs {
 }
 
 const ROOT_REC_W: u64 = 5;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn decode_signed(b: &[u8]) -> Vec<(i64, Option<i64>)> {
+        // an independent reader following ntfs-3g: length and offset are both signed little-endian
+        let (mut i, mut out) = (0, vec![]);
+        while b[i] != 0 {
+            let (lb, ob) = ((b[i] & 15) as usize, (b[i] >> 4) as usize); i += 1;
+            let mut len = b[i + lb - 1] as i8 as i64; for k in (0..lb - 1).rev() { len = (len << 8) + b[i + k] as i64 } i += lb;
+            let off = if ob == 0 { None } else { let mut o = b[i + ob - 1] as i8 as i64; for k in (0..ob - 1).rev() { o = (o << 8) + b[i + k] as i64 } i += ob; Some(o) };
+            out.push((len, off));
+        }
+        out
+    }
+    #[test]
+    fn run_lengths_and_offsets_round_trip_as_signed_numbers() {
+        for len in [1u64, 2, 127, 128, 129, 171, 255, 256, 32767, 32768, 65535, 65536, 8_388_607, 8_388_608, 1 << 31, (1 << 32) + 5] {
+            for lcn in [0u64, 1, 127, 128, 255, 256, 5119, 1 << 20, 1 << 33] {
+                let enc = encode_runs(&[Run { vcn: 0, len, lcn: Some(lcn) }, Run { vcn: len, len: 3, lcn: Some(lcn + 1000) }]);
+                let d = decode_signed(&enc);
+                assert_eq!(d[0].0, len as i64, "length {len}");
+                assert_eq!(d[0].1, Some(lcn as i64), "lcn {lcn}");
+                assert_eq!(d[1], (3, Some(1000)));
+            }
+        }
+        // sparse run too
+        assert_eq!(decode_signed(&encode_runs(&[Run { vcn: 0, len: 200, lcn: None }]))[0], (200, None));
+    }
+}
 
 fn key_of(rec: &Rec) -> Result<Vec<u8>> {
     split(&rec.buf)?.iter().find(|a| a.ty == T_FILENAME).and_then(attr_value).map(|v| v.to_vec()).ok_or(FsError::Corrupt("new record has no FILE_NAME"))
