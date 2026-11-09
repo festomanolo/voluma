@@ -12,8 +12,8 @@ A universal filesystem explorer and storage manager. Rust core engine, native Sw
 | APFS | Tested (OS-generated images) | **Tested** (vs. a real macOS mount) | No | Planned |
 | ext2/3/4 | Tested (unit) | **Tested** (`mke2fs -d` images, `e2fsck`-clean) | No | Planned |
 | NTFS | Tested (unit) | Planned | Planned | Planned |
-| ext2/3/4 | Tested (unit) | Planned | Planned | Planned |
-| APFS | Signature only | Planned | No | Planned |
+| XFS, Btrfs | Tested (unit) | Planned | Planned | Planned |
+| ZFS | Not detected | Planned | Planned | Planned |
 
 "Tested (unit)" = hand-built fixtures only. FAT and exFAT are tested against images generated and populated by macOS's own implementations (`tests/fixtures/make_fat_fixture.sh`): long/Unicode names, nested dirs, a 3 MB SHA-256-checked file, and 200 corrupted-image reads. Fixture tests need macOS; on macOS a generator failure fails the test instead of skipping.
 
