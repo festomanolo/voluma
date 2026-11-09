@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/block-device", "crates/partition-manager", "crates/filesystem-detection", "crates/voluma-ffi", "crates/fs-core", "crates/fs-fat", "crates/fs-exfat"]
+members = ["crates/block-device", "crates/partition-manager", "crates/filesystem-detection", "crates/voluma-ffi", "crates/fs-core", "crates/fs-fat", "crates/fs-exfat", "crates/fs-hfsplus", "crates/fs-ext", "crates/fs-apfs"]
 
 [workspace.package]
 version = "0.1.0"
