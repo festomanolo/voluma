@@ -21,7 +21,8 @@ A universal filesystem explorer and storage manager. Rust core engine, native Sw
 - **Real:** raw image backend (read-only by default, bounds-checked), partition windows, MBR/GPT parsing, signature-based filesystem detection, the C-ABI bridge, and the SwiftUI "Open Disk Image" inspector.
 - **Simulated (badged in the UI):** the dashboard's device list (`apps/macos/Sources/Voluma/Mock`).
 - **Real (new):** FAT12/16/32 (`fs-fat`) and exFAT (`fs-exfat`) read/write drivers, `fs-core` filesystem trait with capability reporting, folder browsing, SHA-256-verified export, and (behind an explicit unlock) import / new folder / rename / delete in the app. Write access is off by default.
-- **Not started:** NTFS / ext / APFS / HFS+ / Btrfs / XFS / ZFS drivers, cross-volume transfers, recovery, mounting, real device discovery.
+- **Real (read-only):** HFS+/HFSX (`fs-hfsplus`), APFS (`fs-apfs`) and ext2/3/4 (`fs-ext`) browse + verified export; the FFI refuses writes to them.
+- **Not started:** NTFS / Btrfs / XFS / ZFS drivers, cross-volume transfers, recovery, mounting, real device discovery.
 
 ## Layout
 - `crates/block-device`: `BlockDevice` trait, `ImageDevice`, `PartitionWindow` (drivers get a window, so they can't write outside their partition)
