@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VOLUMA
+GenericName=Disk & Filesystem Explorer
+Comment=Read and write NTFS, exFAT and FAT, and browse ext4, APFS and HFS+
+Exec=/usr/local/bin/voluma %f
+Icon=voluma
+Terminal=false
+Categories=System;Filesystem;Utility;
+Keywords=ntfs;exfat;fat32;ext4;apfs;hfsplus;disk;partition;storage;
+StartupNotify=true

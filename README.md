@@ -64,9 +64,10 @@ A Rust workspace holds the storage engine. A SwiftUI app sits on top through a s
 | `partition-manager`, `filesystem-detection` | MBR/GPT parsing and signature-based identification |
 | `fs-fat`, `fs-exfat`, `fs-ntfs` | read and write drivers |
 | `fs-ext`, `fs-apfs`, `fs-hfsplus` | read-only drivers |
-| `voluma-ffi` | the C ABI the app calls |
-| `voluma-helper` | the privileged helper (below) |
+| `voluma-ffi` | the C ABI (`staticlib` + `cdylib`) the macOS and Linux apps call |
+| `voluma-helper` | the privileged helper (macOS `getpeereid` & Linux `SO_PEERCRED`) |
 | `apps/macos` | SwiftUI app: disk discovery, Storage Lens, browser, copy and paste |
+| `apps/linux` | GTK 3 Linux / Light OS app + CLI: disk discovery (`lsblk`), Storage Lens, browser, copy and paste |
 
 ### The privileged helper
 
@@ -87,8 +88,10 @@ Details: [filesystem support and limits](docs/FILESYSTEM_SUPPORT.md).
 
 ```bash
 cargo test --workspace                 # drivers, FFI, helper
-apps/macos/build.sh && apps/macos/.build/release/Voluma   # build and run the app + helper
+apps/macos/build.sh && apps/macos/.build/release/Voluma   # build and run the macOS app + helper
 apps/macos/package.sh                  # universal, ad-hoc signed VOLUMA.app + zip in target/dist
+apps/linux/build.sh && apps/linux/voluma                  # build and run the Linux GTK 3 app + helper
+apps/linux/install.sh [DESTDIR]        # install VOLUMA into Linux / or a Light OS rootcopy tree
 pypi/build.sh                          # the nolo-voluma wheel around that app
 ```
 

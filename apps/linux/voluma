@@ -1,0 +1,2034 @@
+#!/usr/bin/env python3
+"""
+VOLUMA for Linux (Light OS / GTK 3).
+Reads and writes NTFS, exFAT, and FAT12/16/32, and browses ext2/3/4, APFS, and HFS+
+through the Rust `libvoluma_ffi` C ABI and the privileged `voluma-helper` daemon.
+"""
+
+import argparse
+import ctypes
+import datetime
+import json
+import os
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from pathlib import Path
+
+__version__ = "0.1.1"
+
+
+def format_bytes(n: int) -> str:
+    if n is None or n < 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    val = float(n)
+    idx = 0
+    while val >= 1000.0 and idx < len(units) - 1:
+        val /= 1000.0
+        idx += 1
+    if idx == 0:
+        return f"{int(val)} B"
+    return f"{val:.1f} {units[idx]}"
+
+
+def join_path(a: str, b: str) -> str:
+    if not a or a == "/":
+        return "/" + b.lstrip("/")
+    return a.rstrip("/") + "/" + b.lstrip("/")
+
+
+# ---------------------------------------------------------------------------
+# Rust Engine C-ABI Wrapper (libvoluma_ffi)
+# ---------------------------------------------------------------------------
+
+class EngineError(Exception):
+    pass
+
+
+class Engine:
+    _lib = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def _load(cls):
+        if cls._lib is not None:
+            return cls._lib
+        with cls._lock:
+            if cls._lib is not None:
+                return cls._lib
+            here = Path(__file__).resolve().parent
+            repo = here.parent.parent
+            candidates = []
+            if os.environ.get("VOLUMA_FFI_LIB"):
+                candidates.append(Path(os.environ["VOLUMA_FFI_LIB"]))
+            for ext in ("so", "dylib"):
+                candidates.extend([
+                    here / f"libvoluma_ffi.{ext}",
+                    Path(f"/usr/local/lib/voluma/libvoluma_ffi.{ext}"),
+                    Path(f"/usr/lib64/voluma/libvoluma_ffi.{ext}"),
+                    Path(f"/usr/lib/voluma/libvoluma_ffi.{ext}"),
+                    repo / "target" / "release" / f"libvoluma_ffi.{ext}",
+                    repo / "target" / "debug" / f"libvoluma_ffi.{ext}",
+                ])
+            lib_path = next((p for p in candidates if p.is_file()), None)
+            if lib_path is None:
+                raise EngineError(
+                    "libvoluma_ffi shared library not found. Build it with apps/linux/build.sh."
+                )
+            lib = ctypes.CDLL(str(lib_path))
+
+            lib.voluma_inspect_image.argtypes = [ctypes.c_char_p]
+            lib.voluma_inspect_image.restype = ctypes.c_void_p
+
+            lib.voluma_list_directory.argtypes = [ctypes.c_char_p, ctypes.c_int32, ctypes.c_char_p]
+            lib.voluma_list_directory.restype = ctypes.c_void_p
+
+            lib.voluma_mutate.argtypes = [
+                ctypes.c_char_p,
+                ctypes.c_int32,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_int32,
+            ]
+            lib.voluma_mutate.restype = ctypes.c_void_p
+
+            lib.voluma_export_file.argtypes = [
+                ctypes.c_char_p,
+                ctypes.c_int32,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+            ]
+            lib.voluma_export_file.restype = ctypes.c_void_p
+
+            lib.voluma_free_string.argtypes = [ctypes.c_void_p]
+            lib.voluma_free_string.restype = None
+
+            cls._lib = lib
+            return lib
+
+    @classmethod
+    def _call(cls, ptr: int):
+        if not ptr:
+            raise EngineError("Null response from voluma-ffi")
+        try:
+            raw = ctypes.cast(ptr, ctypes.c_char_p).value
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        finally:
+            cls._load().voluma_free_string(ptr)
+        if "error" in data and data["error"] is not None:
+            raise EngineError(str(data["error"]))
+        if "ok" not in data:
+            raise EngineError("Malformed engine response")
+        return data["ok"]
+
+    @classmethod
+    def inspect_image(cls, path: str) -> dict:
+        lib = cls._load()
+        return cls._call(lib.voluma_inspect_image(path.encode("utf-8")))
+
+    @classmethod
+    def list_directory(cls, image: str, part: int, path: str) -> dict:
+        lib = cls._load()
+        return cls._call(
+            lib.voluma_list_directory(image.encode("utf-8"), int(part), path.encode("utf-8"))
+        )
+
+    @classmethod
+    def mutate(cls, image: str, part: int, op: str, a: str, b: str = "", overwrite: bool = False) -> dict:
+        lib = cls._load()
+        return cls._call(
+            lib.voluma_mutate(
+                image.encode("utf-8"),
+                int(part),
+                op.encode("utf-8"),
+                a.encode("utf-8"),
+                b.encode("utf-8"),
+                1 if overwrite else 0,
+            )
+        )
+
+    @classmethod
+    def export_file(cls, image: str, part: int, fs_path: str, dest: str) -> dict:
+        lib = cls._load()
+        return cls._call(
+            lib.voluma_export_file(
+                image.encode("utf-8"),
+                int(part),
+                fs_path.encode("utf-8"),
+                dest.encode("utf-8"),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Privileged Helper Session (voluma-helper over Unix socket)
+# ---------------------------------------------------------------------------
+
+class HelperSession:
+    def __init__(self, device: str, title: str, stage: Path, was_mounted: bool = False):
+        self.device = device
+        self.title = title
+        self.stage = stage
+        self.was_mounted = was_mounted
+        self._sock = None
+        self._rfile = None
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def locate_helper() -> Path:
+        here = Path(__file__).resolve().parent
+        repo = here.parent.parent
+        candidates = []
+        if os.environ.get("VOLUMA_HELPER"):
+            candidates.append(Path(os.environ["VOLUMA_HELPER"]))
+        candidates.extend([
+            here / "voluma-helper",
+            Path("/usr/local/bin/voluma-helper"),
+            Path("/usr/bin/voluma-helper"),
+            repo / "target" / "release" / "voluma-helper",
+            repo / "target" / "debug" / "voluma-helper",
+        ])
+        for c in candidates:
+            if c.is_file() and os.access(str(c), os.X_OK):
+                return c
+        raise EngineError("voluma-helper binary not found. Build it with apps/linux/build.sh.")
+
+    def connect(self):
+        sock_path = self.stage / "helper.sock"
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(str(sock_path))
+        self._sock = s
+        self._rfile = s.makefile("r", encoding="utf-8")
+
+    def call_ok(self, payload: dict):
+        with self._lock:
+            if self._sock is None:
+                raise EngineError("Helper session is closed")
+            line = json.dumps(payload) + "\n"
+            self._sock.sendall(line.encode("utf-8"))
+            reply = self._rfile.readline()
+            if not reply:
+                raise EngineError("Lost connection to voluma-helper")
+            env = json.loads(reply)
+            if "error" in env and env["error"] is not None:
+                raise EngineError(str(env["error"]))
+            return env.get("ok")
+
+    def close(self):
+        with self._lock:
+            if self._sock is not None:
+                try:
+                    self._sock.sendall(b'{"op":"quit"}\n')
+                    self._rfile.readline()
+                except Exception:
+                    pass
+                try:
+                    self._sock.close()
+                except Exception:
+                    pass
+                self._sock = None
+                self._rfile = None
+        shutil.rmtree(str(self.stage), ignore_errors=True)
+
+
+class HelperSessions:
+    _active = {}
+
+    @classmethod
+    def get(cls, device: str):
+        return cls._active.get(device)
+
+    @classmethod
+    def start(cls, device: str, title: str, mounted: bool = False, check_write: bool = False) -> HelperSession:
+        if device in cls._active:
+            return cls._active[device]
+        helper = HelperSession.locate_helper()
+        stage = Path(tempfile.mkdtemp(prefix="voluma-")).resolve()
+        os.chmod(str(stage), 0o700)
+
+        if mounted:
+            err = DiskOps.unmount(device)
+            if err:
+                shutil.rmtree(str(stage), ignore_errors=True)
+                raise EngineError(f"Could not unmount {device}: {err}")
+
+        session = HelperSession(device=device, title=title, stage=stage, was_mounted=mounted)
+        try:
+            direct = os.geteuid() == 0 or os.access(device, os.R_OK | (os.W_OK if check_write else os.R_OK))
+            args = [
+                str(helper),
+                "serve",
+                "--device",
+                device,
+                "--stage",
+                str(stage),
+                "--uid",
+                str(os.getuid()),
+                "--parent",
+                str(os.getpid()),
+            ]
+            log_path = stage / "helper.log"
+            log_file = open(str(log_path), "w")
+            if direct:
+                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=log_file)
+            else:
+                sh_cmd = (
+                    f"'{helper}' serve --device '{device}' --stage '{stage}' "
+                    f"--uid {os.getuid()} --parent {os.getpid()} >/dev/null 2>'{log_path}' &"
+                )
+                if shutil.which("pkexec"):
+                    rc = subprocess.call(["pkexec", "sh", "-c", sh_cmd])
+                elif os.path.isfile("/opt/porteus-scripts/xorg/psu"):
+                    rc = subprocess.call(["/opt/porteus-scripts/xorg/psu", "sh", "-c", sh_cmd])
+                else:
+                    rc = subprocess.call(["sudo", "-n", "sh", "-c", sh_cmd])
+                if rc != 0:
+                    raise EngineError("Administrator privileges were not granted.")
+
+            sock_path = stage / "helper.sock"
+            for _ in range(100):
+                if sock_path.exists():
+                    break
+                time.sleep(0.05)
+            else:
+                err_txt = ""
+                try:
+                    err_txt = log_path.read_text(encoding="utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+                raise EngineError("voluma-helper did not start" + (f": {err_txt}" if err_txt else "."))
+
+            session.connect()
+            session.call_ok({"op": "ping"})
+            first = session.call_ok({"op": "list", "path": "/"})
+            if check_write and first.get("write_blocked"):
+                raise EngineError(f"Cannot write safely: {first['write_blocked']}")
+        except Exception:
+            session.close()
+            if mounted:
+                DiskOps.mount(device)
+            raise
+
+        cls._active[device] = session
+        return session
+
+    @classmethod
+    def end(cls, device: str):
+        s = cls._active.pop(device, None)
+        if not s:
+            return None
+        was_mounted = s.was_mounted
+        s.close()
+        if was_mounted:
+            return DiskOps.mount(device)
+        return None
+
+    @classmethod
+    def end_all(cls):
+        for dev in list(cls._active.keys()):
+            cls.end(dev)
+
+
+# ---------------------------------------------------------------------------
+# Backends (EngineBackend, NativeBackend, HelperBackend) & Copier
+# ---------------------------------------------------------------------------
+
+class FSBackend:
+    id: str = ""
+    is_native: bool = False
+
+    def list(self, path: str) -> dict:
+        raise NotImplementedError
+
+    def host_path(self, path: str):
+        return None
+
+    def export_file(self, path: str, dest: Path):
+        raise NotImplementedError
+
+    def import_file(self, host: Path, path: str):
+        raise NotImplementedError
+
+    def mkdir(self, path: str):
+        raise NotImplementedError
+
+    def delete(self, path: str):
+        raise NotImplementedError
+
+    def rename(self, a: str, b: str):
+        raise NotImplementedError
+
+
+class EngineBackend(FSBackend):
+    def __init__(self, image: str, part: int = -1):
+        self.image = image
+        self.part = part
+        self.id = f"img:{image}:{part}"
+        self.is_native = False
+
+    def list(self, path: str) -> dict:
+        return Engine.list_directory(self.image, self.part, path)
+
+    def export_file(self, path: str, dest: Path):
+        Engine.export_file(self.image, self.part, path, str(dest))
+
+    def import_file(self, host: Path, path: str):
+        Engine.mutate(self.image, self.part, "import", path, str(host), False)
+
+    def mkdir(self, path: str):
+        Engine.mutate(self.image, self.part, "mkdir", path)
+
+    def delete(self, path: str):
+        Engine.mutate(self.image, self.part, "delete", path)
+
+    def rename(self, a: str, b: str):
+        Engine.mutate(self.image, self.part, "rename", a, b)
+
+
+class HelperBackend(FSBackend):
+    def __init__(self, session: HelperSession, part: int = -1):
+        self.session = session
+        self.part = part
+        self.id = f"helper:{session.device}:{part}"
+        self.is_native = False
+
+    def list(self, path: str) -> dict:
+        return self.session.call_ok({"op": "list", "part": self.part, "path": path})
+
+    def export_file(self, path: str, dest: Path):
+        name = f"out-{uuid.uuid4().hex[:12]}"
+        self.session.call_ok({"op": "export", "part": self.part, "path": path, "dst": name})
+        staged = self.session.stage / name
+        try:
+            shutil.move(str(staged), str(dest))
+        finally:
+            if staged.exists():
+                staged.unlink()
+
+    def import_file(self, host: Path, path: str):
+        name = f"in-{uuid.uuid4().hex[:12]}"
+        staged = self.session.stage / name
+        shutil.copyfile(str(host), str(staged))
+        try:
+            self.session.call_ok({"op": "import", "part": self.part, "src": name, "path": path})
+        finally:
+            if staged.exists():
+                staged.unlink()
+
+    def mkdir(self, path: str):
+        self.session.call_ok({"op": "mkdir", "part": self.part, "path": path})
+
+    def delete(self, path: str):
+        self.session.call_ok({"op": "delete", "part": self.part, "path": path})
+
+    def rename(self, a: str, b: str):
+        self.session.call_ok({"op": "rename", "part": self.part, "path": a, "to": b})
+
+
+class NativeBackend(FSBackend):
+    def __init__(self, root: str):
+        self.root = root
+        self.id = f"vol:{root}"
+        self.is_native = True
+
+    def _full(self, p: str) -> Path:
+        if not p or p == "/":
+            return Path(self.root)
+        return Path(self.root) / p.lstrip("/")
+
+    def host_path(self, path: str) -> Path:
+        return self._full(path)
+
+    def list(self, p: str) -> dict:
+        target = self._full(p)
+        entries = []
+        with os.scandir(str(target)) as it:
+            for de in it:
+                try:
+                    st = de.stat(follow_symlinks=False)
+                    is_dir = stat.S_ISDIR(st.st_mode)
+                    entries.append({
+                        "name": de.name,
+                        "kind": "directory" if is_dir else "file",
+                        "size": 0 if is_dir else int(st.st_size),
+                        "modified": int(st.st_mtime),
+                        "hidden": de.name.startswith("."),
+                    })
+                except OSError:
+                    continue
+        entries.sort(key=lambda e: (e["kind"] != "directory", e["name"].lower()))
+        return {
+            "filesystem": "Mounted volume",
+            "label": None,
+            "entries": entries,
+            "capabilities": {"read": True, "write": True},
+            "driver_supports_write": True,
+            "write_blocked": None,
+        }
+
+    def export_file(self, path: str, dest: Path):
+        if dest.exists():
+            raise EngineError(f"Destination already exists: {dest}")
+        shutil.copy2(str(self._full(path)), str(dest))
+
+    def import_file(self, host: Path, path: str):
+        dst = self._full(path)
+        if dst.exists():
+            raise EngineError(f"Target already exists: {dst}")
+        shutil.copy2(str(host), str(dst))
+
+    def mkdir(self, path: str):
+        self._full(path).mkdir(parents=False, exist_ok=False)
+
+    def delete(self, path: str):
+        full = self._full(path)
+        if shutil.which("gio"):
+            rc = subprocess.call(["gio", "trash", str(full)])
+            if rc == 0:
+                return
+        # Fallback to XDG Trash
+        trash = Path.home() / ".local" / "share" / "Trash" / "files"
+        trash.mkdir(parents=True, exist_ok=True)
+        dest = trash / f"{full.name}.{uuid.uuid4().hex[:6]}"
+        shutil.move(str(full), str(dest))
+
+    def rename(self, a: str, b: str):
+        dst = self._full(b)
+        if dst.exists():
+            raise EngineError(f"Target already exists: {dst}")
+        self._full(a).rename(dst)
+
+
+class Copier:
+    @staticmethod
+    def unique_name(name: str, taken: set) -> str:
+        if name.lower() not in taken:
+            return name
+        p = Path(name)
+        stem = p.stem if p.suffix else name
+        ext = p.suffix
+        n = 1
+        while True:
+            cand = (f"{stem} copy" if n == 1 else f"{stem} copy {n}") + ext
+            if cand.lower() not in taken:
+                return cand
+            n += 1
+
+    @staticmethod
+    def taken_names(backend: FSBackend, dir_path: str) -> set:
+        try:
+            listing = backend.list(dir_path)
+            return {e["name"].lower() for e in listing.get("entries", [])}
+        except Exception:
+            return set()
+
+    @classmethod
+    def copy_entry(cls, src: FSBackend, src_path: str, entry: dict, dst: FSBackend, dst_dir: str, taken: set, progress=None) -> int:
+        is_dir = entry.get("kind") == "directory"
+        if src.id == dst.id and is_dir and (dst_dir == src_path or dst_dir.startswith(src_path.rstrip("/") + "/")):
+            raise EngineError(f"Cannot copy '{entry['name']}' into itself")
+        name = cls.unique_name(entry["name"], taken)
+        taken.add(name.lower())
+        dpath = join_path(dst_dir, name)
+        if progress:
+            progress(entry["name"])
+        if is_dir:
+            dst.mkdir(dpath)
+            inner = set()
+            count = 1
+            for child in src.list(src_path).get("entries", []):
+                count += cls.copy_entry(src, join_path(src_path, child["name"]), child, dst, dpath, inner, progress)
+            return count
+        host_src = src.host_path(src_path)
+        if host_src is not None:
+            dst.import_file(host_src, dpath)
+            return 1
+        tmp = Path(tempfile.gettempdir()) / f"voluma-copy-{uuid.uuid4().hex}"
+        try:
+            src.export_file(src_path, tmp)
+            dst.import_file(tmp, dpath)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return 1
+
+    @classmethod
+    def copy_host(cls, host_path: Path, dst: FSBackend, dst_dir: str, taken: set, progress=None) -> int:
+        name = cls.unique_name(host_path.name, taken)
+        taken.add(name.lower())
+        dpath = join_path(dst_dir, name)
+        if progress:
+            progress(host_path.name)
+        if host_path.is_dir():
+            dst.mkdir(dpath)
+            inner = set()
+            count = 1
+            for child in sorted(host_path.iterdir(), key=lambda p: p.name.lower()):
+                count += cls.copy_host(child, dst, dpath, inner, progress)
+            return count
+        dst.import_file(host_path, dpath)
+        return 1
+
+
+# ---------------------------------------------------------------------------
+# Linux Disk Discovery & Mount/Eject Operations
+# ---------------------------------------------------------------------------
+
+class DiskNode:
+    def __init__(self, **kw):
+        self.bsd = kw.get("bsd", "")
+        self.path = kw.get("path", f"/dev/{self.bsd}")
+        self.is_whole = kw.get("is_whole", False)
+        self.size = int(kw.get("size") or 0)
+        self.fs_kind = (kw.get("fs_kind") or "").lower()
+        self.label = kw.get("label") or ""
+        self.mount_path = kw.get("mount_path")
+        self.model = (kw.get("model") or "").strip()
+        self.bus_protocol = (kw.get("bus_protocol") or "").upper()
+        self.removable = bool(kw.get("removable", False))
+        self.writable = not bool(kw.get("ro", False))
+        self.is_disk_image = kw.get("type") == "loop"
+        self.total = kw.get("total")
+        self.free = kw.get("free")
+        self.children = kw.get("children") or []
+        self.read_only_mount = bool(kw.get("read_only_mount", False))
+
+    @property
+    def is_mounted(self) -> bool:
+        return bool(self.mount_path)
+
+    @property
+    def raw_browsable(self) -> bool:
+        if self.is_mounted or self.children or self.size < (1 << 20):
+            return False
+        if self.fs_kind in ("swap", "squashfs", "crypto_luks"):
+            return False
+        return True
+
+    @property
+    def title(self) -> str:
+        if self.label:
+            return self.label
+        if self.is_whole:
+            return self.model or f"Disk {self.bsd}"
+        if self.mount_path == "/":
+            return "Light OS Root"
+        return f"Partition {self.bsd}"
+
+    @property
+    def kind_label(self) -> str:
+        mapping = {
+            "vfat": "FAT",
+            "fat32": "FAT32",
+            "fat16": "FAT16",
+            "fat12": "FAT12",
+            "msdos": "FAT",
+            "exfat": "exFAT",
+            "ntfs": "NTFS",
+            "ext4": "ext4",
+            "ext3": "ext3",
+            "ext2": "ext2",
+            "apfs": "APFS",
+            "hfsplus": "HFS+",
+            "iso9660": "ISO 9660",
+            "xfs": "XFS",
+            "btrfs": "Btrfs",
+        }
+        if self.fs_kind:
+            return mapping.get(self.fs_kind, self.fs_kind.upper())
+        return "Disk" if self.is_whole else "Partition"
+
+
+class DiskOps:
+    @staticmethod
+    def snapshot() -> list:
+        try:
+            out = subprocess.check_output(
+                [
+                    "lsblk",
+                    "-J",
+                    "-b",
+                    "-o",
+                    "NAME,KNAME,PATH,TYPE,SIZE,FSTYPE,LABEL,MOUNTPOINT,MODEL,TRAN,RM,RO",
+                ],
+                stderr=subprocess.DEVNULL,
+            ).decode("utf-8", errors="replace")
+            data = json.loads(out)
+        except Exception:
+            return []
+
+        ro_mounts = set()
+        try:
+            with open("/proc/mounts", "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        mp = parts[1]
+                        opts = parts[3].split(",")
+                        if "ro" in opts:
+                            ro_mounts.add(mp)
+        except Exception:
+            pass
+
+        def build_node(item: dict, is_root: bool = False) -> DiskNode:
+            kname = item.get("kname") or item.get("name") or ""
+            dev_path = item.get("path") or f"/dev/{kname}"
+            mp = item.get("mountpoint")
+            # Ignore internal squashfs loop mounts from Porteus/Light OS base modules
+            if item.get("type") == "loop" and (item.get("fstype") == "squashfs" or (mp and mp.startswith("/mnt/live"))):
+                return None
+            total = None
+            free = None
+            ro_mnt = False
+            if mp and os.path.isdir(mp):
+                try:
+                    sv = os.statvfs(mp)
+                    total = int(sv.f_blocks * sv.f_frsize)
+                    free = int(sv.f_bavail * sv.f_frsize)
+                    ro_mnt = mp in ro_mounts or bool(sv.f_flag & getattr(os, "ST_RDONLY", 1))
+                except OSError:
+                    pass
+            kids = []
+            for ch in item.get("children") or []:
+                cn = build_node(ch, False)
+                if cn is not None:
+                    kids.append(cn)
+            return DiskNode(
+                bsd=kname,
+                path=dev_path,
+                is_whole=is_root,
+                size=int(item.get("size") or 0),
+                fs_kind=item.get("fstype") or "",
+                label=item.get("label") or "",
+                mount_path=mp,
+                model=item.get("model") or "",
+                bus_protocol=item.get("tran") or "",
+                removable=bool(item.get("rm")),
+                ro=bool(item.get("ro")),
+                type=item.get("type") or "",
+                total=total,
+                free=free,
+                read_only_mount=ro_mnt,
+                children=kids,
+            )
+
+        disks = []
+        for dev in data.get("blockdevices") or []:
+            if dev.get("type") in ("ram", "zram", "rom"):
+                continue
+            node = build_node(dev, True)
+            if node is not None and (node.size > 0 or node.children):
+                disks.append(node)
+        return disks
+
+    @staticmethod
+    def unmount(device: str):
+        for cmd in (["udisksctl", "unmount", "-b", device], ["umount", device]):
+            if shutil.which(cmd[0]):
+                p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if p.returncode == 0:
+                    return None
+                last_err = (p.stderr or p.stdout).strip()
+        return last_err if "last_err" in locals() else "unmount failed"
+
+    @staticmethod
+    def mount(device: str):
+        if shutil.which("udisksctl"):
+            p = subprocess.run(["udisksctl", "mount", "-b", device], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if p.returncode == 0:
+                return None
+            return (p.stderr or p.stdout).strip()
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Storage Lens Scanner (Parallel directory scanner)
+# ---------------------------------------------------------------------------
+
+CATEGORIES = [
+    ("Applications", "#3b82f6"),
+    ("Documents", "#f97316"),
+    ("Images", "#22c55e"),
+    ("Video", "#a855f7"),
+    ("Audio", "#ec4899"),
+    ("Archives", "#a16207"),
+    ("Developer", "#14b8a6"),
+    ("System & Library", "#6b7280"),
+    ("Other", "#9ca3af"),
+]
+
+EXT_CATEGORY = {}
+for _idx, _exts in enumerate([
+    {"app", "desktop", "flatpak", "snap", "appimage", "xzm"},
+    {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "md", "csv", "epub", "odt", "ods"},
+    {"jpg", "jpeg", "png", "gif", "heic", "heif", "tif", "tiff", "bmp", "webp", "raw", "svg", "psd", "ico"},
+    {"mov", "mp4", "m4v", "avi", "mkv", "wmv", "webm", "mpg", "mpeg"},
+    {"mp3", "m4a", "aac", "wav", "aiff", "flac", "ogg"},
+    {"zip", "gz", "tgz", "bz2", "xz", "7z", "rar", "tar", "dmg", "iso", "pkg", "img", "zst"},
+    {"rs", "py", "c", "h", "cpp", "js", "ts", "tsx", "jsx", "java", "go", "rb", "php", "html", "css", "json", "xml", "yml", "yaml", "sh", "o", "a", "so", "rlib", "wasm"},
+    {"conf", "db", "sqlite", "log", "cache", "dat", "bin", "tmp", "ko"},
+]):
+    for _e in _exts:
+        EXT_CATEGORY[_e] = _idx
+
+
+def classify_file(name: str, systemish: bool) -> int:
+    dot = name.rfind(".")
+    ext = name[dot + 1:].lower() if dot > 0 else ""
+    cat = EXT_CATEGORY.get(ext, 8)
+    if cat == 8 and systemish:
+        return 7
+    return cat
+
+
+class FolderNode:
+    def __init__(self, name: str, path: str, parent=None):
+        self.name = name
+        self.path = path
+        self.parent = parent
+        self.size = 0
+        self.item_count = 0
+        self.cats = [0] * len(CATEGORIES)
+        self.children = []
+        self.files = []
+        self.omitted_files = 0
+        self.omitted_bytes = 0
+        self.unreadable = False
+
+
+class StorageScanner:
+    SKIP_ROOT = {"/proc", "/sys", "/dev", "/run", "/mnt/live"}
+    KEPT_FILES = 100
+
+    @classmethod
+    def scan(cls, root_path: str, cancel_event: threading.Event = None, progress_cb=None) -> dict:
+        t0 = time.monotonic()
+        root_path = os.path.abspath(root_path)
+        try:
+            root_dev = os.stat(root_path, follow_symlinks=False).st_dev
+        except OSError:
+            root_dev = None
+        seen_inodes = set()
+        unreadable_count = 0
+        total_files_seen = 0
+        total_bytes_seen = 0
+
+        root_node = FolderNode(os.path.basename(root_path) or root_path, root_path)
+
+        def walk(node: FolderNode, systemish: bool):
+            nonlocal unreadable_count, total_files_seen, total_bytes_seen
+            if cancel_event and cancel_event.is_set():
+                return
+            if progress_cb and (total_files_seen & 255 == 0):
+                progress_cb(total_files_seen, total_bytes_seen, node.path)
+            try:
+                it = os.scandir(node.path)
+            except OSError:
+                node.unreadable = True
+                unreadable_count += 1
+                return
+
+            local_files = []
+            with it:
+                for de in it:
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    full = os.path.join(node.path, de.name)
+                    if node.path == "/" and full in cls.SKIP_ROOT:
+                        continue
+                    try:
+                        st = de.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if stat.S_ISDIR(st.st_mode):
+                        if root_dev is not None and st.st_dev != root_dev and node.path != "/":
+                            continue
+                        is_sys = systemish or full.startswith(("/usr", "/lib", "/lib64", "/etc", "/var", "/opt"))
+                        child = FolderNode(de.name, full, parent=node)
+                        node.children.append(child)
+                        walk(child, is_sys)
+                    elif stat.S_ISREG(st.st_mode):
+                        size = int(getattr(st, "st_blocks", 0) * 512) or int(st.st_size)
+                        if st.st_nlink > 1:
+                            key = (st.st_dev, st.st_ino)
+                            if key in seen_inodes:
+                                size = 0
+                            else:
+                                seen_inodes.add(key)
+                        cat = classify_file(de.name, systemish)
+                        node.cats[cat] += size
+                        node.size += size
+                        node.item_count += 1
+                        total_files_seen += 1
+                        total_bytes_seen += size
+                        local_files.append({"name": de.name, "size": size, "category": cat, "path": full})
+
+            local_files.sort(key=lambda x: x["size"], reverse=True)
+            if len(local_files) > cls.KEPT_FILES:
+                node.omitted_files = len(local_files) - cls.KEPT_FILES
+                node.omitted_bytes = sum(f["size"] for f in local_files[cls.KEPT_FILES:])
+                node.files = local_files[:cls.KEPT_FILES]
+            else:
+                node.files = local_files
+
+            for c in node.children:
+                node.size += c.size
+                node.item_count += c.item_count
+                for i in range(len(CATEGORIES)):
+                    node.cats[i] += c.cats[i]
+            node.children.sort(key=lambda c: c.size, reverse=True)
+
+        walk(root_node, root_path.startswith(("/usr", "/lib", "/etc", "/var")))
+        largest = []
+
+        def gather_largest(n: FolderNode):
+            largest.extend(n.files[:30])
+            for c in n.children:
+                gather_largest(c)
+
+        gather_largest(root_node)
+        largest.sort(key=lambda f: f["size"], reverse=True)
+        return {
+            "root": root_node,
+            "largest": largest[:200],
+            "unreadable": unreadable_count,
+            "seconds": time.monotonic() - t0,
+            "cancelled": bool(cancel_event and cancel_event.is_set()),
+        }
+
+
+# ---------------------------------------------------------------------------
+# GTK 3 Desktop Application
+# ---------------------------------------------------------------------------
+
+def run_gui(initial_image: str = None):
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk, GLib, Pango
+
+    css = b"""
+    .voluma-card {
+        background-color: alpha(@theme_fg_color, 0.05);
+        border: 1px solid alpha(@theme_fg_color, 0.12);
+        border-radius: 10px;
+        padding: 14px;
+    }
+    .voluma-badge {
+        background-color: alpha(@theme_fg_color, 0.10);
+        border-radius: 5px;
+        padding: 2px 7px;
+        font-family: monospace;
+        font-size: 11px;
+    }
+    .voluma-banner-warn {
+        background-color: alpha(#f97316, 0.16);
+        padding: 8px 14px;
+    }
+    .voluma-banner-ok {
+        background-color: alpha(#22c55e, 0.16);
+        padding: 8px 14px;
+    }
+    """
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css)
+    screen = Gdk.Screen.get_default()
+    if screen is not None:
+        Gtk.StyleContext.add_provider_for_screen(
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    class VolumaWindow(Gtk.Window):
+        def __init__(self):
+            super().__init__(title="VOLUMA")
+            self.set_default_size(1020, 640)
+            self.set_icon_name("voluma")
+
+            self.disks = []
+            self.clip_backend = None
+            self.clip_items = []
+            self.current_report = None
+            self.current_browser = None
+            self.lens_result = None
+            self.lens_current = None
+            self.lens_cancel = None
+
+            # HeaderBar
+            hb = Gtk.HeaderBar(show_close_button=True, title="VOLUMA")
+            hb.set_subtitle("Read & write NTFS, exFAT, FAT · Browse ext4, APFS, HFS+")
+            self.set_titlebar(hb)
+
+            self.back_btn = Gtk.Button.new_from_icon_name("go-previous-symbolic", Gtk.IconSize.BUTTON)
+            self.back_btn.set_tooltip_text("Back")
+            self.back_btn.set_sensitive(False)
+            self.back_btn.connect("clicked", self.on_nav_back)
+            hb.pack_start(self.back_btn)
+
+            refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+            refresh_btn.set_tooltip_text("Refresh Disks")
+            refresh_btn.connect("clicked", lambda *_: self.refresh_disks())
+            hb.pack_end(refresh_btn)
+
+            open_img_btn = Gtk.Button(label="Open Disk Image…")
+            open_img_btn.connect("clicked", self.on_open_image_dialog)
+            hb.pack_end(open_img_btn)
+
+            # Main split layout
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            self.add(paned)
+
+            self.nav_list = Gtk.ListBox()
+            self.nav_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self.nav_list.set_size_request(200, -1)
+            for sec_id, label, icon in [
+                ("disks", "Disks", "drive-harddisk-symbolic"),
+                ("lens", "Storage Lens", "object-select-symbolic"),
+                ("images", "Disk Images", "media-optical-symbolic"),
+            ]:
+                row = Gtk.ListBoxRow()
+                row.sec_id = sec_id
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                box.set_margin_top(10)
+                box.set_margin_bottom(10)
+                box.set_margin_start(12)
+                box.set_margin_end(12)
+                box.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU), False, False, 0)
+                lbl = Gtk.Label(label=label, xalign=0)
+                box.pack_start(lbl, True, True, 0)
+                row.add(box)
+                self.nav_list.add(row)
+            self.nav_list.connect("row-selected", self.on_section_selected)
+            paned.pack1(self.nav_list, False, False)
+
+            self.stack = Gtk.Stack()
+            self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            paned.pack2(self.stack, True, True)
+
+            # Pages
+            self.disks_scroll = Gtk.ScrolledWindow()
+            self.disks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            self.disks_box.set_margin_top(20)
+            self.disks_box.set_margin_bottom(20)
+            self.disks_box.set_margin_start(20)
+            self.disks_box.set_margin_end(20)
+            self.disks_scroll.add(self.disks_box)
+            self.stack.add_named(self.disks_scroll, "disks")
+
+            self.lens_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            self.stack.add_named(self.lens_container, "lens")
+
+            self.images_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            self.stack.add_named(self.images_container, "images")
+
+            self.browser_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            self.stack.add_named(self.browser_container, "browser")
+
+            self.nav_list.select_row(self.nav_list.get_row_at_index(0))
+            self.refresh_disks()
+            self.render_lens_page()
+            self.render_images_page()
+
+            if initial_image:
+                GLib.idle_add(lambda: self.inspect_and_show_image(initial_image))
+
+        def show_error(self, title: str, message: str):
+            dlg = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=title,
+            )
+            dlg.format_secondary_text(message)
+            dlg.run()
+            dlg.destroy()
+
+        def ask_confirm(self, title: str, message: str, ok_label: str = "Continue") -> bool:
+            dlg = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text=title,
+            )
+            dlg.format_secondary_text(message)
+            dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            dlg.add_button(ok_label, Gtk.ResponseType.OK)
+            res = dlg.run()
+            dlg.destroy()
+            return res == Gtk.ResponseType.OK
+
+        def on_section_selected(self, listbox, row):
+            if row is None:
+                return
+            self.current_browser = None
+            self.back_btn.set_sensitive(False)
+            self.stack.set_visible_child_name(row.sec_id)
+
+        def on_nav_back(self, *_):
+            if self.current_browser and self.current_browser.get("back_stack"):
+                b = self.current_browser
+                b["forward_stack"].append(b["path"])
+                b["path"] = b["back_stack"].pop()
+                self.load_browser_dir()
+                return
+            if self.stack.get_visible_child_name() == "browser":
+                if self.current_browser and self.current_browser.get("via_helper"):
+                    HelperSessions.end(self.current_browser["device"])
+                origin = (self.current_browser or {}).get("origin", "disks")
+                self.current_browser = None
+                self.back_btn.set_sensitive(False)
+                self.stack.set_visible_child_name(origin)
+                self.refresh_disks()
+
+        # -------------------------------------------------------------------
+        # Disks View
+        # -------------------------------------------------------------------
+        def refresh_disks(self):
+            self.disks = DiskOps.snapshot()
+            for ch in self.disks_box.get_children():
+                self.disks_box.remove(ch)
+
+            phys = [d for d in self.disks if not d.is_disk_image]
+            total_cap = sum(d.size for d in phys)
+            hdr = Gtk.Label(
+                label=f"{len(phys)} disk{'' if len(phys) == 1 else 's'} · {format_bytes(total_cap)} total",
+                xalign=0,
+            )
+            hdr.set_markup(
+                f"<span size='large' foreground='#888888'>{len(phys)} disk{'' if len(phys) == 1 else 's'} · {format_bytes(total_cap)} total</span>"
+            )
+            self.disks_box.pack_start(hdr, False, False, 0)
+
+            for d in self.disks:
+                self.disks_box.pack_start(self._build_disk_card(d), False, False, 0)
+
+            self.disks_box.show_all()
+
+        def _build_disk_card(self, disk: DiskNode) -> Gtk.Widget:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            card.get_style_context().add_class("voluma-card")
+
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            icon_name = "media-optical-symbolic" if disk.is_disk_image else (
+                "drive-removable-media-symbolic" if disk.removable else "drive-harddisk-symbolic"
+            )
+            top.pack_start(Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.LARGE_TOOLBAR), False, False, 0)
+
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            t_lbl = Gtk.Label(xalign=0)
+            t_lbl.set_markup(f"<b>{GLib.markup_escape_text(disk.title)}</b>")
+            sub_parts = [disk.path]
+            if disk.bus_protocol:
+                sub_parts.append(disk.bus_protocol)
+            sub_parts.append("Removable" if disk.removable else "Internal")
+            if not disk.writable:
+                sub_parts.append("Read-only media")
+            s_lbl = Gtk.Label(label=" · ".join(sub_parts), xalign=0)
+            s_lbl.set_opacity(0.7)
+            info.pack_start(t_lbl, False, False, 0)
+            info.pack_start(s_lbl, False, False, 0)
+            top.pack_start(info, True, True, 0)
+
+            sz_lbl = Gtk.Label(xalign=1)
+            sz_lbl.set_markup(f"<b>{format_bytes(disk.size)}</b>")
+            top.pack_end(sz_lbl, False, False, 0)
+            card.pack_start(top, False, False, 0)
+
+            if disk.is_mounted and not disk.children:
+                card.pack_start(self._build_partition_row(disk), False, False, 0)
+            elif disk.raw_browsable:
+                btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                btn = Gtk.Button(label="Browse Raw (VOLUMA Driver)…")
+                btn.connect("clicked", lambda *_, n=disk: self.open_raw_partition(n))
+                btn_row.pack_end(btn, False, False, 0)
+                card.pack_start(btn_row, False, False, 0)
+
+            for part in disk.children:
+                card.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
+                card.pack_start(self._build_partition_row(part), False, False, 0)
+
+            return card
+
+        def _build_partition_row(self, node: DiskNode) -> Gtk.Widget:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+
+            left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            nlbl = Gtk.Label(xalign=0)
+            nlbl.set_markup(f"<b>{GLib.markup_escape_text(node.title)}</b>")
+            badge = Gtk.Label(label=node.kind_label)
+            badge.get_style_context().add_class("voluma-badge")
+            title_box.pack_start(nlbl, False, False, 0)
+            title_box.pack_start(badge, False, False, 0)
+            left.pack_start(title_box, False, False, 0)
+
+            sub = f"{node.path} · {node.mount_path or 'Not mounted'} · {format_bytes(node.size)}"
+            slbl = Gtk.Label(label=sub, xalign=0)
+            slbl.set_opacity(0.7)
+            left.pack_start(slbl, False, False, 0)
+            row.pack_start(left, True, True, 0)
+
+            right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            if node.is_mounted and node.total and node.total > 0:
+                free = node.free or 0
+                cap_lbl = Gtk.Label(label=f"{format_bytes(free)} available of {format_bytes(node.total)}", xalign=1)
+                cap_lbl.set_opacity(0.75)
+                bar = Gtk.ProgressBar()
+                bar.set_fraction(max(0.0, min(1.0, 1.0 - float(free) / float(node.total))))
+                bar.set_size_request(260, -1)
+                right.pack_start(cap_lbl, False, False, 0)
+                right.pack_start(bar, False, False, 0)
+
+            btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            if node.is_mounted:
+                b_browse = Gtk.Button(label="Browse")
+                b_browse.connect("clicked", lambda *_, n=node: self.open_mounted_volume(n))
+                btns.pack_start(b_browse, False, False, 0)
+
+                b_lens = Gtk.Button(label="Storage Lens")
+                b_lens.connect("clicked", lambda *_, n=node: self.start_lens_scan(n.mount_path, n.title))
+                btns.pack_start(b_lens, False, False, 0)
+
+                b_files = Gtk.Button(label="Show in Files")
+                b_files.connect("clicked", lambda *_, mp=node.mount_path: subprocess.Popen(["xdg-open", mp]))
+                btns.pack_start(b_files, False, False, 0)
+            elif node.raw_browsable:
+                b_raw = Gtk.Button(label="Browse Raw…")
+                b_raw.connect("clicked", lambda *_, n=node: self.open_raw_partition(n))
+                btns.pack_start(b_raw, False, False, 0)
+
+            right.pack_start(btns, False, False, 0)
+            row.pack_end(right, False, False, 0)
+            return row
+
+        # -------------------------------------------------------------------
+        # Browser View
+        # -------------------------------------------------------------------
+        def open_mounted_volume(self, node: DiskNode):
+            self.current_browser = {
+                "title": node.title,
+                "backend": NativeBackend(node.mount_path),
+                "path": "/",
+                "back_stack": [],
+                "forward_stack": [],
+                "is_native": True,
+                "via_helper": False,
+                "device": node.path,
+                "fs_kind": node.fs_kind,
+                "read_only_mount": node.read_only_mount,
+                "write_unlocked": False,
+                "origin": "disks",
+            }
+            self.stack.set_visible_child_name("browser")
+            self.load_browser_dir()
+
+        def open_raw_partition(self, node: DiskNode):
+            try:
+                sess = HelperSessions.start(node.path, node.title, mounted=False, check_write=False)
+            except Exception as e:
+                self.show_error("Could not open partition", str(e))
+                return
+            self.current_browser = {
+                "title": node.title,
+                "backend": HelperBackend(sess, -1),
+                "path": "/",
+                "back_stack": [],
+                "forward_stack": [],
+                "is_native": False,
+                "via_helper": True,
+                "raw_only": True,
+                "device": node.path,
+                "fs_kind": node.fs_kind,
+                "read_only_mount": False,
+                "write_unlocked": False,
+                "origin": "disks",
+            }
+            self.stack.set_visible_child_name("browser")
+            self.load_browser_dir()
+
+        def open_image_browser(self, image_path: str, part: int, title: str):
+            self.current_browser = {
+                "title": title,
+                "backend": EngineBackend(image_path, part),
+                "path": "/",
+                "back_stack": [],
+                "forward_stack": [],
+                "is_native": False,
+                "via_helper": False,
+                "device": image_path,
+                "fs_kind": "",
+                "read_only_mount": False,
+                "write_unlocked": False,
+                "origin": "images",
+            }
+            self.stack.set_visible_child_name("browser")
+            self.load_browser_dir()
+
+        def enable_helper_writing(self):
+            b = self.current_browser
+            if not b or not b.get("device"):
+                return
+            if not self.ask_confirm(
+                f"Enable writing to '{b['title']}'?",
+                "VOLUMA will unmount the volume from Linux, start its privileged helper, and write directly with VOLUMA's driver (refusing dirty or hibernated volumes).",
+                "Unmount & Enable Writing",
+            ):
+                return
+            try:
+                sess = HelperSessions.start(b["device"], b["title"], mounted=True, check_write=True)
+            except Exception as e:
+                self.show_error("Could not enable writing", str(e))
+                return
+            b["backend"] = HelperBackend(sess, -1)
+            b["is_native"] = False
+            b["via_helper"] = True
+            b["raw_only"] = False
+            b["read_only_mount"] = False
+            self.load_browser_dir()
+
+        def load_browser_dir(self):
+            b = self.current_browser
+            if not b:
+                return
+            self.back_btn.set_sensitive(True)
+            for ch in self.browser_container.get_children():
+                self.browser_container.remove(ch)
+
+            try:
+                listing = b["backend"].list(b["path"])
+                b["listing"] = listing
+                err_msg = None
+            except Exception as e:
+                listing = None
+                err_msg = str(e)
+
+            driver_writable = bool(listing and listing.get("driver_supports_write"))
+            write_blocked = listing.get("write_blocked") if listing else None
+            can_write = (
+                (b["is_native"] and not b["read_only_mount"])
+                or (b["via_helper"] and driver_writable and not write_blocked)
+                or (not b["is_native"] and not b["via_helper"] and b["write_unlocked"] and driver_writable and not write_blocked)
+            )
+            b["can_write"] = can_write
+
+            # Toolbar
+            tbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            tbar.set_margin_top(8)
+            tbar.set_margin_bottom(8)
+            tbar.set_margin_start(14)
+            tbar.set_margin_end(14)
+
+            root_btn = Gtk.Button(label=b["title"])
+            root_btn.connect("clicked", lambda *_: self._browser_go("/"))
+            tbar.pack_start(root_btn, False, False, 0)
+
+            crumbs = [c for c in b["path"].split("/") if c]
+            for i, c in enumerate(crumbs):
+                tbar.pack_start(Gtk.Label(label="›"), False, False, 2)
+                target_p = "/" + "/".join(crumbs[: i + 1])
+                cb = Gtk.Button(label=c)
+                cb.connect("clicked", lambda *_, p=target_p: self._browser_go(p))
+                tbar.pack_start(cb, False, False, 0)
+
+            if listing:
+                fs_lbl = Gtk.Label(label=listing.get("filesystem", ""))
+                fs_lbl.get_style_context().add_class("voluma-badge")
+                tbar.pack_end(fs_lbl, False, False, 4)
+
+            if not b["is_native"] and not b["via_helper"]:
+                lock_btn = Gtk.Button(label="Writable" if b["write_unlocked"] else "Read-only")
+                lock_btn.set_sensitive(driver_writable and not write_blocked)
+                lock_btn.connect("clicked", self._toggle_image_writable)
+                tbar.pack_end(lock_btn, False, False, 0)
+
+            if can_write:
+                imp_btn = Gtk.Button(label="Import…")
+                imp_btn.connect("clicked", self._on_import_files)
+                tbar.pack_end(imp_btn, False, False, 0)
+
+                mkdir_btn = Gtk.Button(label="New Folder")
+                mkdir_btn.connect("clicked", self._on_new_folder)
+                tbar.pack_end(mkdir_btn, False, False, 0)
+
+                paste_btn = Gtk.Button(label="Paste")
+                paste_btn.set_sensitive(bool(self.clip_items))
+                paste_btn.connect("clicked", self._on_paste)
+                tbar.pack_end(paste_btn, False, False, 0)
+
+            copy_btn = Gtk.Button(label="Copy")
+            copy_btn.connect("clicked", self._on_copy_selected)
+            tbar.pack_end(copy_btn, False, False, 0)
+
+            self.browser_container.pack_start(tbar, False, False, 0)
+            self.browser_container.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0)
+
+            # NTFS / Read-only mount banner or Helper banner
+            if b["is_native"] and b["read_only_mount"] and b["fs_kind"] in ("ntfs", "exfat", "vfat", "msdos"):
+                banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                banner.get_style_context().add_class("voluma-banner-warn")
+                banner.pack_start(
+                    Gtk.Label(label="This volume is mounted read-only. Enable VOLUMA's raw driver to write.", xalign=0),
+                    True,
+                    True,
+                    0,
+                )
+                en_btn = Gtk.Button(label="Enable Writing…")
+                en_btn.connect("clicked", lambda *_: self.enable_helper_writing())
+                banner.pack_end(en_btn, False, False, 0)
+                self.browser_container.pack_start(banner, False, False, 0)
+            elif b["via_helper"]:
+                banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                banner.get_style_context().add_class("voluma-banner-ok")
+                msg = (
+                    "Writing through VOLUMA's driver (volume unmounted from OS until you finish)."
+                    if can_write
+                    else (f"Read-only: {write_blocked}" if write_blocked else "Reading through VOLUMA's raw driver (read-only).")
+                )
+                banner.pack_start(Gtk.Label(label=msg, xalign=0), True, True, 0)
+                fin_btn = Gtk.Button(label="Close" if b.get("raw_only") else "Finish & Remount")
+                fin_btn.connect("clicked", lambda *_: self.on_nav_back())
+                banner.pack_end(fin_btn, False, False, 0)
+                self.browser_container.pack_start(banner, False, False, 0)
+
+            if err_msg:
+                lbl = Gtk.Label(label=f"Cannot read folder: {err_msg}")
+                self.browser_container.pack_start(lbl, True, True, 20)
+                self.browser_container.show_all()
+                return
+
+            # Table (TreeView)
+            store = Gtk.ListStore(str, str, str, str, object)
+            entries = (listing or {}).get("entries", [])
+            for e in entries:
+                is_dir = e.get("kind") == "directory"
+                sz_txt = "—" if is_dir else format_bytes(int(e.get("size") or 0))
+                mtime = e.get("modified")
+                mod_txt = (
+                    datetime.datetime.fromtimestamp(int(mtime)).strftime("%Y-%m-%d %H:%M")
+                    if mtime
+                    else "—"
+                )
+                icon = "folder-symbolic" if is_dir else "text-x-generic-symbolic"
+                store.append([icon, e["name"], sz_txt, mod_txt, e])
+
+            tv = Gtk.TreeView(model=store)
+            tv.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
+            tv.connect("row-activated", self._on_browser_row_activated)
+            b["treeview"] = tv
+
+            col_name = Gtk.TreeViewColumn("Name")
+            cell_pix = Gtk.CellRendererPixbuf()
+            cell_txt = Gtk.CellRendererText()
+            col_name.pack_start(cell_pix, False)
+            col_name.pack_start(cell_txt, True)
+            col_name.add_attribute(cell_pix, "icon-name", 0)
+            col_name.add_attribute(cell_txt, "text", 1)
+            col_name.set_expand(True)
+            tv.append_column(col_name)
+
+            for idx, title, width in [(2, "Size", 110), (3, "Modified", 160)]:
+                r = Gtk.CellRendererText()
+                col = Gtk.TreeViewColumn(title, r, text=idx)
+                col.set_fixed_width(width)
+                tv.append_column(col)
+
+            sc = Gtk.ScrolledWindow()
+            sc.add(tv)
+            self.browser_container.pack_start(sc, True, True, 0)
+
+            # Bottom action / status bar
+            sbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            sbar.set_margin_top(6)
+            sbar.set_margin_bottom(6)
+            sbar.set_margin_start(14)
+            sbar.set_margin_end(14)
+            status_lbl = Gtk.Label(label=b.get("status") or f"{len(entries)} items", xalign=0)
+            status_lbl.set_opacity(0.75)
+            sbar.pack_start(status_lbl, True, True, 0)
+
+            exp_btn = Gtk.Button(label="Export Selected…")
+            exp_btn.connect("clicked", self._on_export_selected)
+            sbar.pack_end(exp_btn, False, False, 0)
+
+            if can_write:
+                del_btn = Gtk.Button(label="Move to Trash" if b["is_native"] else "Delete")
+                del_btn.connect("clicked", self._on_delete_selected)
+                sbar.pack_end(del_btn, False, False, 0)
+
+                ren_btn = Gtk.Button(label="Rename…")
+                ren_btn.connect("clicked", self._on_rename_selected)
+                sbar.pack_end(ren_btn, False, False, 0)
+
+            self.browser_container.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0)
+            self.browser_container.pack_start(sbar, False, False, 0)
+            self.browser_container.show_all()
+
+        def _browser_go(self, new_path: str):
+            b = self.current_browser
+            if not b or new_path == b["path"]:
+                return
+            b["back_stack"].append(b["path"])
+            b["forward_stack"].clear()
+            b["path"] = new_path
+            self.load_browser_dir()
+
+        def _selected_entries(self) -> list:
+            b = self.current_browser
+            if not b or "treeview" not in b:
+                return []
+            model, paths = b["treeview"].get_selection().get_selected_rows()
+            return [model[p][4] for p in paths]
+
+        def _on_browser_row_activated(self, tv, path, col):
+            model = tv.get_model()
+            entry = model[path][4]
+            b = self.current_browser
+            if entry.get("kind") == "directory":
+                self._browser_go(join_path(b["path"], entry["name"]))
+            elif b["is_native"]:
+                hp = b["backend"].host_path(join_path(b["path"], entry["name"]))
+                if hp:
+                    subprocess.Popen(["xdg-open", str(hp)])
+            else:
+                self._export_entry(entry)
+
+        def _toggle_image_writable(self, *_):
+            b = self.current_browser
+            if not b:
+                return
+            if b["write_unlocked"]:
+                b["write_unlocked"] = False
+            else:
+                if self.ask_confirm(
+                    "Allow changes to this disk image?",
+                    "VOLUMA will modify the disk image file directly. Volumes that were not cleanly unmounted are refused.",
+                    "Allow Changes",
+                ):
+                    b["write_unlocked"] = True
+            self.load_browser_dir()
+
+        def _on_copy_selected(self, *_):
+            b = self.current_browser
+            es = self._selected_entries()
+            if not b or not es:
+                return
+            self.clip_backend = b["backend"]
+            self.clip_items = [(join_path(b["path"], e["name"]), e) for e in es]
+            b["status"] = f"Copied {len(es)} item{'' if len(es) == 1 else 's'}"
+            self.load_browser_dir()
+
+        def _on_paste(self, *_):
+            b = self.current_browser
+            if not b or not b.get("can_write") or not self.clip_items:
+                return
+            taken = Copier.taken_names(b["backend"], b["path"])
+            count = 0
+            try:
+                for src_path, entry in self.clip_items:
+                    count += Copier.copy_entry(self.clip_backend, src_path, entry, b["backend"], b["path"], taken)
+                b["status"] = f"Pasted {count} item{'' if count == 1 else 's'}"
+            except Exception as e:
+                self.show_error("Paste failed", str(e))
+            self.load_browser_dir()
+
+        def _on_new_folder(self, *_):
+            b = self.current_browser
+            if not b or not b.get("can_write"):
+                return
+            dlg = Gtk.Dialog(title="New Folder", transient_for=self, flags=0)
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Create", Gtk.ResponseType.OK)
+            entry = Gtk.Entry(placeholder_text="Folder name")
+            entry.set_margin_top(12)
+            entry.set_margin_bottom(12)
+            entry.set_margin_start(12)
+            entry.set_margin_end(12)
+            dlg.get_content_area().add(entry)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK:
+                name = entry.get_text().strip()
+                if name:
+                    try:
+                        b["backend"].mkdir(join_path(b["path"], name))
+                        b["status"] = f"Created {name}"
+                    except Exception as e:
+                        self.show_error("Create Folder Failed", str(e))
+            dlg.destroy()
+            self.load_browser_dir()
+
+        def _on_rename_selected(self, *_):
+            b = self.current_browser
+            es = self._selected_entries()
+            if not b or len(es) != 1:
+                return
+            target_e = es[0]
+            dlg = Gtk.Dialog(title="Rename", transient_for=self, flags=0)
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Rename", Gtk.ResponseType.OK)
+            entry = Gtk.Entry(text=target_e["name"])
+            entry.set_margin_top(12)
+            entry.set_margin_bottom(12)
+            entry.set_margin_start(12)
+            entry.set_margin_end(12)
+            dlg.get_content_area().add(entry)
+            dlg.show_all()
+            if dlg.run() == Gtk.ResponseType.OK:
+                new_name = entry.get_text().strip()
+                if new_name and new_name != target_e["name"]:
+                    try:
+                        b["backend"].rename(join_path(b["path"], target_e["name"]), join_path(b["path"], new_name))
+                        b["status"] = f"Renamed to {new_name}"
+                    except Exception as e:
+                        self.show_error("Rename Failed", str(e))
+            dlg.destroy()
+            self.load_browser_dir()
+
+        def _on_delete_selected(self, *_):
+            b = self.current_browser
+            es = self._selected_entries()
+            if not b or not es:
+                return
+            action = "Move to Trash" if b["is_native"] else "Permanently delete"
+            if not self.ask_confirm(
+                f"{action} {len(es)} item{'' if len(es) == 1 else 's'}?",
+                "Items on mounted volumes go to the Trash. Items inside raw images/volumes are deleted immediately.",
+                action,
+            ):
+                return
+            try:
+                for e in es:
+                    b["backend"].delete(join_path(b["path"], e["name"]))
+                b["status"] = f"Deleted {len(es)} item{'' if len(es) == 1 else 's'}"
+            except Exception as e:
+                self.show_error("Delete Failed", str(e))
+            self.load_browser_dir()
+
+        def _on_import_files(self, *_):
+            b = self.current_browser
+            if not b or not b.get("can_write"):
+                return
+            dlg = Gtk.FileChooserDialog(
+                title="Import Files into Volume",
+                parent=self,
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Import", Gtk.ResponseType.OK)
+            dlg.set_select_multiple(True)
+            if dlg.run() == Gtk.ResponseType.OK:
+                files = [Path(f) for f in dlg.get_filenames()]
+                taken = Copier.taken_names(b["backend"], b["path"])
+                try:
+                    n = 0
+                    for f in files:
+                        n += Copier.copy_host(f, b["backend"], b["path"], taken)
+                    b["status"] = f"Imported {n} item{'' if n == 1 else 's'}"
+                except Exception as e:
+                    self.show_error("Import Failed", str(e))
+            dlg.destroy()
+            self.load_browser_dir()
+
+        def _on_export_selected(self, *_):
+            es = self._selected_entries()
+            if len(es) == 1:
+                self._export_entry(es[0])
+
+        def _export_entry(self, entry: dict):
+            b = self.current_browser
+            if not b or entry.get("kind") == "directory":
+                return
+            dlg = Gtk.FileChooserDialog(
+                title="Export File",
+                parent=self,
+                action=Gtk.FileChooserAction.SAVE,
+            )
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Export", Gtk.ResponseType.OK)
+            dlg.set_current_name(entry["name"])
+            dlg.set_do_overwrite_confirmation(True)
+            if dlg.run() == Gtk.ResponseType.OK:
+                dest = Path(dlg.get_filename())
+                if dest.exists():
+                    dest.unlink()
+                try:
+                    b["backend"].export_file(join_path(b["path"], entry["name"]), dest)
+                    b["status"] = f"Exported {entry['name']} ({format_bytes(entry.get('size', 0))})"
+                except Exception as e:
+                    self.show_error("Export Failed", str(e))
+            dlg.destroy()
+            self.load_browser_dir()
+
+        # -------------------------------------------------------------------
+        # Storage Lens View
+        # -------------------------------------------------------------------
+        def start_lens_scan(self, path: str, title: str):
+            self.nav_list.select_row(self.nav_list.get_row_at_index(1))
+            self.stack.set_visible_child_name("lens")
+            if self.lens_cancel:
+                self.lens_cancel.set()
+            cancel_ev = threading.Event()
+            self.lens_cancel = cancel_ev
+
+            for ch in self.lens_container.get_children():
+                self.lens_container.remove(ch)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box.set_valign(Gtk.Align.CENTER)
+            box.set_halign(Gtk.Align.CENTER)
+            sp = Gtk.Spinner()
+            sp.start()
+            lbl = Gtk.Label(label=f"Scanning {title} ({path})…")
+            sub = Gtk.Label(label="0 files")
+            box.pack_start(sp, False, False, 0)
+            box.pack_start(lbl, False, False, 0)
+            box.pack_start(sub, False, False, 0)
+            self.lens_container.pack_start(box, True, True, 0)
+            self.lens_container.show_all()
+
+            def prog(files, bytes_seen, cur):
+                GLib.idle_add(lambda: sub.set_text(f"{files:,} files · {format_bytes(bytes_seen)}"))
+
+            def worker():
+                res = StorageScanner.scan(path, cancel_ev, prog)
+                res["title"] = title
+                def done():
+                    self.lens_result = res
+                    self.lens_current = res["root"]
+                    self.render_lens_page()
+                GLib.idle_add(done)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def render_lens_page(self):
+            for ch in self.lens_container.get_children():
+                self.lens_container.remove(ch)
+
+            if not self.lens_result or not self.lens_current:
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                box.set_margin_top(24)
+                box.set_margin_start(24)
+                box.set_margin_end(24)
+                hdr = Gtk.Label(xalign=0)
+                hdr.set_markup("<span size='large'><b>Storage Lens — Choose a volume or folder to analyse</b></span>")
+                box.pack_start(hdr, False, False, 0)
+                for d in self.disks:
+                    nodes = [d] + d.children
+                    for n in nodes:
+                        if n.is_mounted:
+                            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                            row.get_style_context().add_class("voluma-card")
+                            row.pack_start(Gtk.Label(label=f"{n.title} ({n.mount_path})", xalign=0), True, True, 0)
+                            btn = Gtk.Button(label="Scan")
+                            btn.connect("clicked", lambda *_, m=n.mount_path, t=n.title: self.start_lens_scan(m, t))
+                            row.pack_end(btn, False, False, 0)
+                            box.pack_start(row, False, False, 0)
+
+                choose_btn = Gtk.Button(label="Choose Folder…")
+                choose_btn.connect("clicked", self._on_choose_lens_folder)
+                box.pack_start(choose_btn, False, False, 0)
+                self.lens_container.pack_start(box, True, True, 0)
+                self.lens_container.show_all()
+                return
+
+            cur = self.lens_current
+            res = self.lens_result
+
+            top = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            top.set_margin_top(16)
+            top.set_margin_bottom(12)
+            top.set_margin_start(16)
+            top.set_margin_end(16)
+
+            hrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            if cur.parent is not None:
+                up_btn = Gtk.Button(label="← Up")
+                up_btn.connect("clicked", lambda *_: self._set_lens_node(cur.parent))
+                hrow.pack_start(up_btn, False, False, 0)
+            tlbl = Gtk.Label(xalign=0)
+            tlbl.set_markup(f"<span size='large'><b>{GLib.markup_escape_text(cur.name)}</b></span> — {format_bytes(cur.size)} ({cur.item_count:,} files in {res['seconds']:.1f}s)")
+            hrow.pack_start(tlbl, True, True, 0)
+
+            new_btn = Gtk.Button(label="New Scan")
+            new_btn.connect("clicked", lambda *_: self._reset_lens())
+            hrow.pack_end(new_btn, False, False, 0)
+            top.pack_start(hrow, False, False, 0)
+
+            # Category breakdown summary
+            cat_parts = []
+            for i, (cname, color) in enumerate(CATEGORIES):
+                if cur.cats[i] > 0:
+                    cat_parts.append(f"<span foreground='{color}'>●</span> {cname}: <b>{format_bytes(cur.cats[i])}</b>")
+            cat_lbl = Gtk.Label(xalign=0)
+            cat_lbl.set_line_wrap(True)
+            cat_lbl.set_markup("   ".join(cat_parts) if cat_parts else "Empty")
+            top.pack_start(cat_lbl, False, False, 0)
+            self.lens_container.pack_start(top, False, False, 0)
+            self.lens_container.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0)
+
+            store = Gtk.ListStore(str, str, str, object)
+            for c in cur.children:
+                pct = (100.0 * c.size / cur.size) if cur.size > 0 else 0.0
+                store.append([f"📁 {c.name}", f"{pct:.1f}%", format_bytes(c.size), c])
+            for f in cur.files:
+                pct = (100.0 * f["size"] / cur.size) if cur.size > 0 else 0.0
+                store.append([f"📄 {f['name']}", f"{pct:.1f}%", format_bytes(f["size"]), None])
+
+            tv = Gtk.TreeView(model=store)
+            for idx, title, expand in [(0, "Name", True), (1, "Share", False), (2, "Size", False)]:
+                r = Gtk.CellRendererText()
+                col = Gtk.TreeViewColumn(title, r, text=idx)
+                col.set_expand(expand)
+                tv.append_column(col)
+
+            def on_row(tree, path, col):
+                node = tree.get_model()[path][3]
+                if node is not None:
+                    self._set_lens_node(node)
+
+            tv.connect("row-activated", on_row)
+            sc = Gtk.ScrolledWindow()
+            sc.add(tv)
+            self.lens_container.pack_start(sc, True, True, 0)
+            self.lens_container.show_all()
+
+        def _set_lens_node(self, node: FolderNode):
+            self.lens_current = node
+            self.render_lens_page()
+
+        def _reset_lens(self):
+            self.lens_result = None
+            self.lens_current = None
+            self.render_lens_page()
+
+        def _on_choose_lens_folder(self, *_):
+            dlg = Gtk.FileChooserDialog(
+                title="Choose Folder to Scan",
+                parent=self,
+                action=Gtk.FileChooserAction.SELECT_FOLDER,
+            )
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Scan", Gtk.ResponseType.OK)
+            if dlg.run() == Gtk.ResponseType.OK:
+                folder = dlg.get_filename()
+                dlg.destroy()
+                if folder:
+                    self.start_lens_scan(folder, os.path.basename(folder) or folder)
+            else:
+                dlg.destroy()
+
+        # -------------------------------------------------------------------
+        # Disk Images View
+        # -------------------------------------------------------------------
+        def on_open_image_dialog(self, *_):
+            dlg = Gtk.FileChooserDialog(
+                title="Open Disk Image",
+                parent=self,
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK)
+            if dlg.run() == Gtk.ResponseType.OK:
+                path = dlg.get_filename()
+                dlg.destroy()
+                if path:
+                    self.inspect_and_show_image(path)
+            else:
+                dlg.destroy()
+
+        def inspect_and_show_image(self, path: str):
+            try:
+                self.current_report = Engine.inspect_image(path)
+            except Exception as e:
+                self.show_error("Could not read disk image", str(e))
+                return
+            self.nav_list.select_row(self.nav_list.get_row_at_index(2))
+            self.stack.set_visible_child_name("images")
+            self.render_images_page()
+
+        def render_images_page(self):
+            for ch in self.images_container.get_children():
+                self.images_container.remove(ch)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            box.set_margin_top(24)
+            box.set_margin_start(24)
+            box.set_margin_end(24)
+
+            if not self.current_report:
+                lbl = Gtk.Label(label="Open a raw disk image (.img, .iso) to inspect its partitions and filesystems.", xalign=0)
+                btn = Gtk.Button(label="Open Disk Image…")
+                btn.connect("clicked", self.on_open_image_dialog)
+                box.pack_start(lbl, False, False, 0)
+                box.pack_start(btn, False, False, 0)
+                self.images_container.pack_start(box, True, True, 0)
+                self.images_container.show_all()
+                return
+
+            r = self.current_report
+            hdr = Gtk.Label(xalign=0)
+            hdr.set_markup(
+                f"<span size='large'><b>{GLib.markup_escape_text(os.path.basename(r['path']))}</b></span>\n"
+                f"<span foreground='#888888'>{format_bytes(r['size'])} · {r['table']['kind'].upper()} · opened read-only</span>"
+            )
+            box.pack_start(hdr, False, False, 0)
+
+            browsable = {"fat12", "fat16", "fat32", "ex_fat", "hfs_plus", "ext", "apfs", "ntfs"}
+
+            wfs = r.get("whole_disk_filesystem")
+            if wfs:
+                box.pack_start(
+                    self._image_part_row(
+                        "Whole-disk Filesystem",
+                        wfs.get("detail") or wfs.get("kind"),
+                        wfs.get("label"),
+                        None,
+                        wfs.get("kind") in browsable,
+                        lambda *_: self.open_image_browser(r["path"], -1, wfs.get("label") or os.path.basename(r["path"])),
+                    ),
+                    False,
+                    False,
+                    0,
+                )
+
+            for p in r.get("partitions") or []:
+                fs = p.get("filesystem") or {}
+                idx = p["index"]
+                title = f"Partition {idx} · {p.get('type_name') or p.get('type_id')}"
+                extra = f"{format_bytes(p['length'])} @ offset {p['offset']}"
+                lbl = fs.get("label") or p.get("name")
+                box.pack_start(
+                    self._image_part_row(
+                        title,
+                        fs.get("detail") or fs.get("kind"),
+                        lbl,
+                        extra,
+                        fs.get("kind") in browsable,
+                        lambda *_, i=idx, l=lbl: self.open_image_browser(r["path"], i, l or f"Partition {i}"),
+                    ),
+                    False,
+                    False,
+                    0,
+                )
+
+            self.images_container.pack_start(box, True, True, 0)
+            self.images_container.show_all()
+
+        def _image_part_row(self, title, fs_name, label, extra, can_browse, on_browse):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.get_style_context().add_class("voluma-card")
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            tl = Gtk.Label(xalign=0)
+            tl.set_markup(f"<b>{GLib.markup_escape_text(title)}</b>")
+            v.pack_start(tl, False, False, 0)
+            if extra:
+                el = Gtk.Label(label=extra, xalign=0)
+                el.set_opacity(0.7)
+                v.pack_start(el, False, False, 0)
+            row.pack_start(v, True, True, 0)
+            if label:
+                row.pack_start(Gtk.Label(label=label), False, False, 6)
+            badge = Gtk.Label(label=str(fs_name))
+            badge.get_style_context().add_class("voluma-badge")
+            row.pack_start(badge, False, False, 6)
+            if can_browse:
+                b = Gtk.Button(label="Browse")
+                b.connect("clicked", on_browse)
+                row.pack_start(b, False, False, 0)
+            return row
+
+    win = VolumaWindow()
+    win.connect("destroy", lambda *_: (HelperSessions.end_all(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+
+# ---------------------------------------------------------------------------
+# CLI Entrypoint
+# ---------------------------------------------------------------------------
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(
+        prog="voluma",
+        description="VOLUMA — Read and write NTFS, exFAT and FAT, and browse ext4, APFS and HFS+.",
+    )
+    p.add_argument("-V", "--version", action="store_true", help="Print version and exit")
+    sub = p.add_subparsers(dest="cmd")
+
+    p_ins = sub.add_parser("inspect", help="Inspect partitions and filesystems of a disk image or block device")
+    p_ins.add_argument("image")
+
+    p_ls = sub.add_parser("list", help="List a directory inside a disk image or partition")
+    p_ls.add_argument("image")
+    p_ls.add_argument("path", nargs="?", default="/")
+    p_ls.add_argument("--part", type=int, default=-1)
+
+    p_exp = sub.add_parser("export", help="Export a file from an image or partition to the host")
+    p_exp.add_argument("image")
+    p_exp.add_argument("fs_path")
+    p_exp.add_argument("dest")
+    p_exp.add_argument("--part", type=int, default=-1)
+
+    p_mut = sub.add_parser("mutate", help="Mutate a writable filesystem (mkdir, delete, rename, import)")
+    p_mut.add_argument("image")
+    p_mut.add_argument("op", choices=["mkdir", "delete", "rename", "import"])
+    p_mut.add_argument("a")
+    p_mut.add_argument("b", nargs="?", default="")
+    p_mut.add_argument("--part", type=int, default=-1)
+
+    p_disks = sub.add_parser("disks", help="List detected Linux block devices as JSON")
+
+    args, extra = p.parse_known_args(argv)
+    if args.version:
+        print(f"voluma {__version__}")
+        return 0
+
+    try:
+        if args.cmd == "inspect":
+            print(json.dumps(Engine.inspect_image(args.image), indent=2))
+            return 0
+        if args.cmd == "list":
+            print(json.dumps(Engine.list_directory(args.image, args.part, args.path), indent=2))
+            return 0
+        if args.cmd == "export":
+            print(json.dumps(Engine.export_file(args.image, args.part, args.fs_path, args.dest), indent=2))
+            return 0
+        if args.cmd == "mutate":
+            print(json.dumps(Engine.mutate(args.image, args.part, args.op, args.a, args.b), indent=2))
+            return 0
+        if args.cmd == "disks":
+            out = [
+                {
+                    "bsd": d.bsd,
+                    "path": d.path,
+                    "title": d.title,
+                    "size": d.size,
+                    "kind": d.kind_label,
+                    "mount": d.mount_path,
+                    "children": [
+                        {
+                            "bsd": c.bsd,
+                            "path": c.path,
+                            "title": c.title,
+                            "size": c.size,
+                            "kind": c.kind_label,
+                            "mount": c.mount_path,
+                        }
+                        for c in d.children
+                    ],
+                }
+                for d in DiskOps.snapshot()
+            ]
+            print(json.dumps(out, indent=2))
+            return 0
+    except EngineError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+
+    img = extra[0] if extra and os.path.exists(extra[0]) else None
+    run_gui(img)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

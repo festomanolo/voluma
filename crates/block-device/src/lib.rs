@@ -57,6 +57,19 @@ fn device_size(file: &File) -> io::Result<u64> {
         let ok = unsafe { libc::ioctl(fd, 0x4004_6418, &mut bs) == 0 && libc::ioctl(fd, 0x4008_6419, &mut count) == 0 };
         if ok && bs > 0 { return Ok(bs as u64 * count); }
     }
+    #[cfg(target_os = "linux")]
+    {
+        // BLKGETSIZE64 (0x80081272 on x86_64/aarch64 Linux) returns size in bytes as u64
+        let mut bytes = 0u64;
+        let fd = file.as_raw_fd();
+        let ok = unsafe { libc::ioctl(fd, 0x8008_1272u32 as libc::Ioctl, &mut bytes) == 0 };
+        if ok && bytes > 0 { return Ok(bytes); }
+        let end = unsafe { libc::lseek(fd, 0, libc::SEEK_END) };
+        if end > 0 {
+            unsafe { libc::lseek(fd, 0, libc::SEEK_SET); }
+            return Ok(end as u64);
+        }
+    }
     let _ = file.as_raw_fd();
     Ok(0)
 }

@@ -112,11 +112,12 @@ fn helper_serves_an_ntfs_block_device() {
 #[test]
 fn helper_rejects_bad_configuration() {
     let d = tempfile::tempdir().unwrap();
+    // stage dir owned by someone else than --uid is refused
+    let mismatch_uid = if unsafe { libc::getuid() } == 0 { "9999" } else { "0" };
     let run = |dev: &str| Command::new(env!("CARGO_BIN_EXE_voluma-helper"))
-        .args(["serve", "--device", dev, "--stage", d.path().to_str().unwrap(), "--uid", "0", "--parent", "1"]).output().unwrap().status.success();
+        .args(["serve", "--device", dev, "--stage", d.path().to_str().unwrap(), "--uid", mismatch_uid, "--parent", "1"]).output().unwrap().status.success();
     for bad in ["/etc/passwd", "/dev/null", "/dev/disk", "/dev/diskXs1", "/dev/disk1s", "/dev/disk1/../../etc", "disk1"] {
         assert!(!run(bad), "device {bad:?} must be refused");
     }
-    // stage dir owned by someone else than --uid is refused (we are not uid 0)
     assert!(!run("/dev/disk99"));
 }

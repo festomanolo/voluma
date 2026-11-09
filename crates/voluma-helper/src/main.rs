@@ -32,14 +32,48 @@ fn main() {
     if let Err(e) = run(device, stage, uid, parent, idle) { eprintln!("voluma-helper: {e}"); std::process::exit(1); }
 }
 
-fn valid_device(d: &str) -> bool {
-    let Some(rest) = d.strip_prefix("/dev/disk") else { return false };
-    let (n, s) = match rest.split_once('s') { Some((n, s)) => (n, Some(s)), None => (rest, None) };
-    !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && s.map_or(true, |s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+fn is_digits(s: &str) -> bool { !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) }
+
+fn valid_alpha_part(rest: &str) -> bool {
+    let alpha = rest.bytes().take_while(|b| b.is_ascii_lowercase()).count();
+    alpha > 0 && rest[alpha..].bytes().all(|b| b.is_ascii_digit())
+}
+
+fn valid_num_opt_p(rest: &str) -> bool {
+    match rest.split_once('p') {
+        Some((n, p)) => is_digits(n) && is_digits(p),
+        None => is_digits(rest),
+    }
+}
+
+pub fn valid_device(d: &str) -> bool {
+    if d.contains('/') && !d.starts_with("/dev/") { return false; }
+    let Some(name) = d.strip_prefix("/dev/") else { return false };
+    if name.is_empty() || name.contains('/') || name.contains('.') || name.contains('\0') { return false; }
+    if let Some(rest) = name.strip_prefix("disk") {
+        let (n, s) = match rest.split_once('s') { Some((n, s)) => (n, Some(s)), None => (rest, None) };
+        return is_digits(n) && s.map_or(true, is_digits);
+    }
+    for pfx in ["sd", "vd", "hd", "xvd"] {
+        if let Some(rest) = name.strip_prefix(pfx) { return valid_alpha_part(rest); }
+    }
+    if let Some(rest) = name.strip_prefix("nvme") {
+        if let Some((ctrl, ns_part)) = rest.split_once('n') {
+            return is_digits(ctrl) && valid_num_opt_p(ns_part);
+        }
+        return false;
+    }
+    for pfx in ["mmcblk", "loop"] {
+        if let Some(rest) = name.strip_prefix(pfx) { return valid_num_opt_p(rest); }
+    }
+    for pfx in ["dm-", "sr", "md"] {
+        if let Some(rest) = name.strip_prefix(pfx) { return is_digits(rest); }
+    }
+    false
 }
 
 fn run(device: String, stage: String, uid: String, parent: String, idle: u64) -> Result<(), String> {
-    if !valid_device(&device) { return Err("device must be /dev/diskN or /dev/diskNsM".into()); }
+    if !valid_device(&device) { return Err("device must be a valid block device (/dev/diskN[sM], /dev/sdX[N], /dev/nvmeXnY[pZ], /dev/mmcblkX[pY], /dev/loopX)".into()); }
     let uid: u32 = uid.parse().map_err(|_| "bad uid")?;
     let parent: i32 = parent.parse().map_err(|_| "bad parent pid")?;
     let stage = fs::canonicalize(&stage).map_err(|e| format!("stage dir: {e}"))?;
@@ -78,11 +112,32 @@ fn run(device: String, stage: String, uid: String, parent: String, idle: u64) ->
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn peer_uid(s: &UnixStream) -> Option<u32> {
     use std::os::unix::io::AsRawFd;
     let (mut u, mut g) = (0u32, 0u32);
     if unsafe { libc::getpeereid(s.as_raw_fd(), &mut u, &mut g) } == 0 { Some(u) } else { None }
 }
+
+#[cfg(target_os = "linux")]
+fn peer_uid(s: &UnixStream) -> Option<u32> {
+    use std::os::unix::io::AsRawFd;
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            s.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut libc::ucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc == 0 { Some(cred.uid) } else { None }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn peer_uid(_s: &UnixStream) -> Option<u32> { None }
 
 /// Returns true when the helper should exit.
 fn serve(stream: UnixStream, cfg: &Cfg, last: &mut Instant) -> bool {
@@ -104,15 +159,17 @@ fn bare_name(n: &str) -> bool { !n.is_empty() && n != "." && n != ".." && n != "
 fn handle(line: &str, cfg: &Cfg) -> (String, bool) {
     let Ok(v) = serde_json::from_str::<Value>(line) else { return (err("bad request"), false) };
     let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let part = v.get("part").and_then(Value::as_i64).unwrap_or(-1) as i32;
     let dev = cfg.device.as_str();
     let r = match v.get("op").and_then(Value::as_str).unwrap_or("") {
         "ping" => json!({ "ok": "pong" }).to_string(),
         "quit" => { flush_device(dev); return (json!({ "ok": "bye" }).to_string(), true) }
-        "list" => voluma_ffi::list_directory_json(dev, -1, &s("path")),
-        "mkdir" | "delete" => voluma_ffi::mutate_json(dev, -1, &s("op"), &s("path"), "", false),
-        "rename" => voluma_ffi::mutate_json(dev, -1, "rename", &s("path"), &s("to"), false),
-        "import" => import(cfg, &s("src"), &s("path")),
-        "export" => export(cfg, &s("path"), &s("dst")),
+        "inspect" => voluma_ffi::inspect_image_json(dev),
+        "list" => voluma_ffi::list_directory_json(dev, part, &s("path")),
+        "mkdir" | "delete" => voluma_ffi::mutate_json(dev, part, &s("op"), &s("path"), "", false),
+        "rename" => voluma_ffi::mutate_json(dev, part, "rename", &s("path"), &s("to"), false),
+        "import" => import(cfg, part, &s("src"), &s("path")),
+        "export" => export(cfg, part, &s("path"), &s("dst")),
         _ => err("unknown operation"),
     };
     // Block-device writes go through the buffer cache: push them to the media before replying.
@@ -123,13 +180,17 @@ fn handle(line: &str, cfg: &Cfg) -> (String, bool) {
 fn flush_device(dev: &str) {
     use std::os::unix::io::AsRawFd;
     if let Ok(f) = fs::OpenOptions::new().read(true).write(true).open(dev) {
-        unsafe { libc::fsync(f.as_raw_fd()); libc::fcntl(f.as_raw_fd(), libc::F_FULLFSYNC); }
+        unsafe {
+            libc::fsync(f.as_raw_fd());
+            #[cfg(target_os = "macos")]
+            libc::fcntl(f.as_raw_fd(), libc::F_FULLFSYNC);
+        }
     }
 }
 
 /// stage/<src> -> (private copy) -> NTFS:<path>. `src` is a bare file name; it must be a regular, non-symlink
 /// file owned by the invoking user.
-fn import(cfg: &Cfg, src: &str, path: &str) -> String {
+fn import(cfg: &Cfg, part: i32, src: &str, path: &str) -> String {
     if !bare_name(src) { return err("invalid staged file name"); }
     let p = CString::new(cfg.stage.join(src).to_str().unwrap_or("")).unwrap();
     let fd = unsafe { libc::open(p.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW) };
@@ -147,16 +208,16 @@ fn import(cfg: &Cfg, src: &str, path: &str) -> String {
         std::io::copy(&mut f, &mut o)?; o.sync_all()
     })();
     if let Err(e) = res { let _ = fs::remove_file(&tmp); return err(e.to_string()); }
-    let r = voluma_ffi::mutate_json(&cfg.device, -1, "import", path, tmp.to_str().unwrap(), false);
+    let r = voluma_ffi::mutate_json(&cfg.device, part, "import", path, tmp.to_str().unwrap(), false);
     let _ = fs::remove_file(&tmp);
     r
 }
 
-fn export(cfg: &Cfg, path: &str, dst: &str) -> String {
+fn export(cfg: &Cfg, part: i32, path: &str, dst: &str) -> String {
     if !bare_name(dst) { return err("invalid destination name"); }
     let tmp = cfg.private.join("out.bin");
     let _ = fs::remove_file(&tmp);
-    let r = voluma_ffi::export_file_json(&cfg.device, -1, path, tmp.to_str().unwrap());
+    let r = voluma_ffi::export_file_json(&cfg.device, part, path, tmp.to_str().unwrap());
     if serde_json::from_str::<Value>(&r).ok().and_then(|v| v.get("ok").cloned()).is_none() { let _ = fs::remove_file(&tmp); return r; }
     let p = CString::new(cfg.stage.join(dst).to_str().unwrap_or("")).unwrap();
     let fd = unsafe { libc::open(p.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW, 0o600) };
@@ -175,3 +236,28 @@ impl Mode0600 for fs::OpenOptions {
 
 #[allow(dead_code)]
 fn _unused(_: &Path) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_macos_and_linux_block_devices() {
+        for good in [
+            "/dev/disk0", "/dev/disk2s1", "/dev/disk12s3",
+            "/dev/sda", "/dev/sda1", "/dev/sdb12", "/dev/nvme0n1", "/dev/nvme0n1p1",
+            "/dev/mmcblk0", "/dev/mmcblk0p2", "/dev/loop0", "/dev/loop0p1",
+            "/dev/vda", "/dev/vda1", "/dev/dm-0", "/dev/sr0", "/dev/md0",
+        ] {
+            assert!(valid_device(good), "expected valid device: {good}");
+        }
+        for bad in [
+            "", "/etc/passwd", "/dev/null", "/dev/zero", "/dev/disk", "/dev/diskXs1",
+            "/dev/disk1s", "/dev/disk1/../../etc", "disk1", "/dev/sd", "/dev/sd1",
+            "/dev/nvme0", "/dev/nvme0n", "/dev/nvme0n1p", "/dev/loop", "/dev/loop0p",
+            "/dev/sda/../null", "/dev/sda.img",
+        ] {
+            assert!(!valid_device(bad), "expected rejected device: {bad}");
+        }
+    }
+}
