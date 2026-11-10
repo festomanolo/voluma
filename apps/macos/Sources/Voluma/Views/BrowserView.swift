@@ -349,15 +349,12 @@ struct BrowserView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 124), spacing: 8, alignment: .top)], spacing: 10) {
-                ForEach(rows) { e in
-                    VStack(spacing: 4) {
-                        Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 56, height: 56)
-                        Text(e.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(selection.contains(e.id) ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(selection.contains(e.id) ? Color.white : (e.hidden ? Color.secondary : Color.primary))
-                        TagDots(colors: FinderTag.dots(for: e))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 124), spacing: 8, alignment: .top)], spacing: 10, pinnedViews: [.sectionHeaders]) {
+                ForEach(groups) { g in
+                    SwiftUI.Section {
+                        ForEach(g.entries) { e in gridCell(e) }
+                    } header: {
+                        if group != .none { groupHeader(g).background(.regularMaterial) }
                     }
                     .padding(6).frame(maxWidth: .infinity)
                     .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
