@@ -80,11 +80,13 @@ struct BrowserView: View {
     private var canWrite: Bool { (isNative && !target.readOnlyMount) || (isHelper && helperCanWrite) || writeUnlocked }
     private var needsNtfsUnlock: Bool { isNative && target.readOnlyMount && target.fsKind == "ntfs" && target.bsd != nil }
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
-    private var sorted: [Listing.Entry] {
-        (listing?.entries ?? []).sorted(using: sortOrder).sorted { $0.isDir && !$1.isDir }
-    }
     private var driverWritable: Bool { listing?.driver_supports_write ?? false }
-    private var selected: [Listing.Entry] { sorted.filter { selection.contains($0.id) } }
+    private var selected: [Listing.Entry] { rows.filter { selection.contains($0.id) } }
+    private var mode: ViewMode { ViewMode(rawValue: viewMode) ?? .list }
+    private var rootTitle: String { target.nativeRoot == "/" && target.startPath != "/" ? "Macintosh HD" : target.title }
+
+    private func url(_ e: Listing.Entry) -> URL? { backend.hostURL(joinPath(path, e.name)) }
+    private func isCutRow(_ e: Listing.Entry) -> Bool { _ = cutTick; return Clip.shared.isCutItem(backendID: backend.id, path: joinPath(path, e.name)) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,13 +94,9 @@ struct BrowserView: View {
             Divider()
             if needsNtfsUnlock { ntfsBanner }
             if isHelper { helperBanner }
-            if let error {
-                ContentUnavailableView("Can't read folder", systemImage: "exclamationmark.triangle", description: Text(error))
-            } else if listing != nil && sorted.isEmpty {
-                ContentUnavailableView("Empty folder", systemImage: "folder", description: Text(canWrite ? "Paste (⌘V) files here." : ""))
-            } else {
-                table
-            }
+            content
+                .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 3).padding(4).allowsHitTesting(false) } }
+                .dropDestination(for: URL.self) { urls, _ in dropURLs(urls) } isTargeted: { dropTargeted = $0 }
             Divider()
             HStack(spacing: 8) {
                 if busy { ProgressView().controlSize(.small) }
