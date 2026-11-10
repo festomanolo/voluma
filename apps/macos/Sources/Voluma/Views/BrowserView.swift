@@ -32,6 +32,9 @@ struct BrowserView: View {
     @State private var forwardStack: [String] = []
     @State private var listing: Listing?
     @State private var rows: [Listing.Entry] = []
+    @State private var groups: [EntryGroup] = []
+    @AppStorage("voluma.groupBy") private var groupBy = GroupKey.none.rawValue
+    @AppStorage("voluma.inspector") private var showInspector = false
     @State private var error: String?
     @State private var selection: Set<Listing.Entry.ID> = []
     @State private var sortOrder = [KeyPathComparator(\Listing.Entry.name)]
