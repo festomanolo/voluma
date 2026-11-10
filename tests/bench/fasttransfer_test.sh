@@ -15,3 +15,9 @@ ln -s a/b/big.bin "$W/src/tree/link"; xattr -w com.test.x hello "$W/src/tree/emp
 touch -t 202001010101 "$W/src/tree/a/b/big.bin"; chmod 640 "$W/src/tree/a/b/big.bin"
 
 echo "1. same-volume copy (clone) keeps content, links, xattrs, mtime, mode"
+"$FT" copy "$W/src/tree" "$W/dst" | grep -q "errors 0" || fail copy
+diff -r "$W/src/tree" "$W/dst/tree" || fail content
+[ "$(readlink "$W/dst/tree/link")" = "a/b/big.bin" ] || fail symlink
+[ "$(xattr -p com.test.x "$W/dst/tree/empty")" = hello ] || fail xattr
+[ "$(stat -f %m "$W/dst/tree/a/b/big.bin")" = "$(stat -f %m "$W/src/tree/a/b/big.bin")" ] || fail mtime
+[ "$(stat -f %Lp "$W/dst/tree/a/b/big.bin")" = 640 ] || fail mode
