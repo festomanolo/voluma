@@ -262,14 +262,23 @@ struct InfoSheet: View {
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
         .padding(20).frame(width: 440)
-        .task {
-            guard let url else { return }
-            info = InfoLoader.load(url, entry: entry)
-            if entry.isDir {
-                computing = true
-                let b = await Task.detached(priority: .utility) { InfoLoader.folderSize(url) }.value
-                folderBytes = b; computing = false
-            }
+    }
+}
+
+/// The right-hand panel: a large preview and the details of the selection (or of the folder when nothing is selected).
+struct InspectorPane: View {
+    let selection: [Listing.Entry]
+    let url: (Listing.Entry) -> URL?
+    let folderName: String; let folderPath: String; let itemCount: Int; let filesystem: String
+    @State private var thumb: NSImage?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                if selection.count == 1, let e = selection.first { single(e) }
+                else if selection.count > 1 { multiple }
+                else { folder }
+            }.padding(16).frame(maxWidth: .infinity)
         }
     }
 
