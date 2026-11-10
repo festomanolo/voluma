@@ -219,7 +219,8 @@ struct BrowserView: View {
         ToolbarItem { sortGroupMenu }
         ToolbarItemGroup {
             if canWrite {
-                Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }.help("New Folder (⇧⌘N)")
+                Button { newFolderName = ""; showNewFolder = true } label: { Label("New Folder", systemImage: "folder.badge.plus") }
+                    .help("New Folder (⇧⌘N)")
                 Menu {
                     ForEach(FileTemplate.all) { t in Button(t.title, systemImage: t.symbol) { openNewFile(t) } }
                 } label: { Label("New File", systemImage: "doc.badge.plus") } primaryAction: { openNewFile(FileTemplate.all[1]) }
