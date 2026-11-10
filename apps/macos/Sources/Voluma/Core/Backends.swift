@@ -13,6 +13,8 @@ protocol FSBackend {
     func exportFile(_ path: String, to dest: URL) throws
     func importFile(from host: URL, to path: String) throws
     func mkdir(_ path: String) throws
+    /// Creates a new file holding `contents` (empty by default). Never overwrites.
+    func createFile(_ path: String, contents: Data) throws
     func delete(_ path: String) throws
     func rename(_ a: String, _ b: String) throws
 }
@@ -26,6 +28,7 @@ struct EngineBackend: FSBackend {
     func exportFile(_ path: String, to dest: URL) throws { _ = try Engine.exportFile(image: image, part: part, path: path, dest: dest.path) }
     func importFile(from host: URL, to path: String) throws { try Engine.mutate(image: image, part: part, op: "import", a: path, b: host.path) }
     func mkdir(_ path: String) throws { try Engine.mutate(image: image, part: part, op: "mkdir", a: path) }
+    func createFile(_ path: String, contents: Data) throws { try createViaImport(self, path, contents) }
     func delete(_ path: String) throws { try Engine.mutate(image: image, part: part, op: "delete", a: path) }
     func rename(_ a: String, _ b: String) throws { try Engine.mutate(image: image, part: part, op: "rename", a: a, b: b) }
 }
