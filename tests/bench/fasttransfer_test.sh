@@ -21,3 +21,9 @@ diff -r "$W/src/tree" "$W/dst/tree" || fail content
 [ "$(xattr -p com.test.x "$W/dst/tree/empty")" = hello ] || fail xattr
 [ "$(stat -f %m "$W/dst/tree/a/b/big.bin")" = "$(stat -f %m "$W/src/tree/a/b/big.bin")" ] || fail mtime
 [ "$(stat -f %Lp "$W/dst/tree/a/b/big.bin")" = 640 ] || fail mode
+
+echo "2. name clash never overwrites"
+"$FT" copy "$W/src/tree" "$W/dst" >/dev/null; [ -d "$W/dst/tree copy" ] || fail clash
+"$FT" copy "$W/src/tree" "$W/dst" >/dev/null; [ -d "$W/dst/tree copy 2" ] || fail clash2
+
+echo "3. copying a folder into itself is refused"
