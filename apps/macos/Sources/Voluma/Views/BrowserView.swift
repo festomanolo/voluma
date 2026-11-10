@@ -95,8 +95,6 @@ struct BrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbarRow
-            Divider()
             if needsNtfsUnlock { ntfsBanner }
             if isHelper { helperBanner }
             content
