@@ -423,7 +423,7 @@ struct BrowserView: View {
                 headerCell("Date Modified", .modified).frame(width: 150, alignment: .leading)
                 headerCell("Size", .size).frame(width: 80, alignment: .leading)
                 headerCell("Kind", .kind).frame(width: 130, alignment: .leading)
-            }.padding(.horizontal, 26).padding(.vertical, 4).background(.bar)
+            }.padding(.horizontal, 20).padding(.vertical, 4).background(.bar)
             Divider()
             List(selection: $selection) {
                 ForEach(groups) { g in
