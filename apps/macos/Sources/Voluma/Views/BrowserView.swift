@@ -542,7 +542,7 @@ struct BrowserView: View {
             Button("") { openNewFile(FileTemplate.all[1]) }.keyboardShortcut("n", modifiers: [.command, .option]).disabled(!canWrite)
             Button("") { duplicate() }.keyboardShortcut("d", modifiers: .command).disabled(selection.isEmpty || !canWrite)
             Button("") { showInfo() }.keyboardShortcut("i", modifiers: .command).disabled(selection.count != 1)
-            Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite || filterFocused)
+            Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite)
             Button("") { paste(forceMove: true) }.keyboardShortcut("v", modifiers: [.command, .option]).disabled(!canWrite || busy)
             Button("") { copyPath() }.keyboardShortcut("c", modifiers: [.command, .option]).disabled(selection.isEmpty)
             Button("") { showInspector.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
