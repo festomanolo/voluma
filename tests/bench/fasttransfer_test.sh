@@ -44,5 +44,5 @@ cp -R "$W/src/tree" "$W/src/tree2"
 "$FT" move "$W/mnt/tree" "$W/dst" | grep -q "errors 0" || fail move-back
 [ ! -e "$W/mnt/tree" ] || fail source-removed
 find "$W/dst/tree copy 2" -name '._*' | grep -q . && fail sidecars-left || true
-diff -r "$W/src/tree2" "$W/dst/tree copy 3" || fail move-back-content
+diff -r "$W/src/tree2" "$W/dst/tree copy 2" || fail move-back-content
 echo "all FastTransfer tests passed"
