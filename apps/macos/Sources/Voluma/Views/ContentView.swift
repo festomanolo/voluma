@@ -115,6 +115,16 @@ struct ContentView: View {
                 SwiftUI.Section("Favorites") {
                     ForEach(Favorite.all) { f in Label(f.title, systemImage: f.icon).tag(SidebarItem.place(f.id)) }
                 }
+                SwiftUI.Section("Locations") {
+                    ForEach(locations) { n in
+                        Label(n.title, systemImage: icon(for: n)).tag(SidebarItem.location(n.bsd))
+                            .contextMenu {
+                                if let m = n.mountPath { Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: m)) } }
+                                if n.isMounted { Button("Storage Lens") { if let m = n.mountPath { lens.start(url: URL(fileURLWithPath: m), title: n.title, volume: n); navigate(section: .lens) } } }
+                                if canEject(n) { Button("Eject") { Ejector.eject(bsd: wholeDisk(of: n.bsd)) { _ in monitor.refresh() } } }
+                            }
+                    }
+                }
                 SwiftUI.Section("VOLUMA") {
                     ForEach(Section.allCases) { s in Label(s.rawValue, systemImage: s.icon).tag(SidebarItem.section(s)) }
                 }
