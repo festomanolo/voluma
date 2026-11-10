@@ -442,6 +442,8 @@ struct BrowserView: View {
                             }
                             .font(.callout).foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
                             .tag(e.id).modifier(DragOut(url: url(e)))
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
                         }
                     } header: { groupHeader(g) }
                 }
