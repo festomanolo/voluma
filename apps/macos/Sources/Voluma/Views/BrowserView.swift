@@ -551,7 +551,6 @@ struct BrowserView: View {
             Button("") { if let e = selected.first { open(e) } }.keyboardShortcut(.downArrow, modifiers: .command).disabled(selection.isEmpty)
             Button("") { viewMode = ViewMode.list.rawValue }.keyboardShortcut("1", modifiers: .command)
             Button("") { viewMode = ViewMode.icons.rawValue }.keyboardShortcut("2", modifiers: .command)
-            Button("") { filterFocused = true }.keyboardShortcut("f", modifiers: .command)
             Button("") { makeAlias() }.keyboardShortcut("a", modifiers: [.command, .control]).disabled(selection.isEmpty || !canWrite || !isNative)
             Button("") { goBack() }.keyboardShortcut("[", modifiers: .command).disabled(backStack.isEmpty)
             Button("") { goForward() }.keyboardShortcut("]", modifiers: .command).disabled(forwardStack.isEmpty)
