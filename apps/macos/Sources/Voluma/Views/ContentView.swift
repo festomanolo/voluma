@@ -55,6 +55,47 @@ struct ContentView: View {
     }
     private var canGoBack: Bool { (place.browse != nil && nav.innerCanBack) || !history.isEmpty }
 
+    /// Mounted volumes (and unmounted partitions VOLUMA can read) for the Locations list.
+    private var locations: [DiskNode] {
+        func walk(_ n: DiskNode) -> [DiskNode] { [n] + n.children.flatMap(walk) }
+        let all = monitor.disks.flatMap(walk)
+        var seen = Set<String>()
+        return all.filter { n in
+            guard !n.isWhole || n.children.isEmpty else { return false }
+            let ok: Bool
+            if let m = n.mountPath { ok = m == "/" || m.hasPrefix("/Volumes/") } else { ok = n.rawBrowsable && !n.isDiskImage }
+            return ok && seen.insert(n.bsd).inserted
+        }
+    }
+    private func icon(for n: DiskNode) -> String {
+        if n.isNetwork { return "network" }
+        if !n.isMounted { return "externaldrive.badge.questionmark" }
+        if n.mountPath == "/" { return "internaldrive" }
+        return n.isInternal == false ? "externaldrive" : "internaldrive"
+    }
+    private func canEject(_ n: DiskNode) -> Bool { n.isMounted && n.mountPath != "/" && (n.isDiskImage || n.isInternal == false || n.ejectable || n.removable) }
+    /// "disk5s1" → "disk5": ejecting works on the whole disk.
+    private func wholeDisk(of bsd: String) -> String {
+        guard bsd.hasPrefix("disk") else { return bsd }
+        let digits = bsd.dropFirst(4).prefix { $0.isNumber }
+        return "disk" + digits
+    }
+
+    private func browse(_ node: DiskNode) {
+        guard let m = node.mountPath else {
+            // Unmounted partition: read it raw through the helper (admin prompt unless the device is ours).
+            Task { @MainActor in
+                do {
+                    _ = try await NtfsSessions.shared.start(bsd: node.bsd, title: node.title, mounted: false)
+                    navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, bsd: node.bsd, viaHelper: true, rawOnly: true))
+                } catch { rawError = error.localizedDescription }
+            }
+            return
+        }
+        let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
+        navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m, bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
+    }
+
     var body: some View {
         NavigationSplitView {
             List(selection: Binding<SidebarItem?>(
