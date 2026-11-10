@@ -66,6 +66,10 @@ struct ContentView: View {
                     switch item {
                     case .section(let s): navigate(section: s)
                     case .place(let id): if let f = Favorite.all.first(where: { $0.id == id }) { navigate(section: .disks, browse: f.target) }
+                    case nil: break
+                    }
+                })) {
+                SwiftUI.Section("Favorites") {
                 Label(s.rawValue, systemImage: s.icon).tag(s)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
