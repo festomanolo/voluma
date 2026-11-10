@@ -61,6 +61,7 @@ Transfer engine, measured on the same Mac (internal SATA SSD, source and destina
 | Copy 10,001 small files across volumes | 3.9 s | `cp -R`: 15.5 s, `ditto`: 13.4 s |
 | Copy 10,001 files within one APFS volume | 2.2 s (clones) | |
 | Copy a 1 GB file within one APFS volume | instant (clone) | |
+| Move a folder within one volume | 11 ms (rename) | |
 The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
 
 ## How it is built
