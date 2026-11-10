@@ -33,3 +33,9 @@ echo "4. same-volume move is a rename"
 mkdir "$W/mv"; "$FT" move "$W/dst/tree copy 2" "$W/mv" | grep -q "renamed 1" || fail rename
 [ ! -e "$W/dst/tree copy 2" ] && [ -d "$W/mv/tree copy 2" ] || fail moved
 
+echo "5. cross-volume copy and move (exFAT image)"
+hdiutil create -size 200m -fs ExFAT -volname FTTEST -layout NONE "$W/x.dmg" >/dev/null
+mkdir "$W/mnt"; hdiutil attach "$W/x.dmg" -mountpoint "$W/mnt" -nobrowse >/dev/null
+"$FT" copy "$W/src/tree" "$W/mnt" | grep -q "errors 0" || fail copy-exfat
+diff -r "$W/src/tree" "$W/mnt/tree" 2>&1 | grep -v "Directory loop" | grep -v '^$' && fail content-exfat || true
+cmp "$W/src/tree/a/b/big.bin" "$W/mnt/tree/a/b/big.bin" || fail bigfile
