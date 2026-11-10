@@ -258,18 +258,7 @@ struct InfoSheet: View {
                 Spacer()
             }
             Divider()
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 7) {
-                if url == nil {
-                    infoRow("Kind", entry.kindText)
-                    if !entry.isDir { infoRow("Size", "\(formatBytes(Int64(size))) (\(size.formatted()) bytes)") }
-                    infoRow("Modified", entry.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .long, time: .standard) } ?? "—")
-                } else {
-                    ForEach(Array(info.rows.enumerated()), id: \.offset) { _, r in infoRow(r.0, r.1) }
-                    if entry.isDir {
-                        infoRow("Size", folderBytes.map { "\(formatBytes($0)) on disk" } ?? (computing ? "Calculating…" : "—"))
-                    }
-                }
-            }
+            ItemDetails(entry: entry, url: url)
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
         .padding(20).frame(width: 440)
