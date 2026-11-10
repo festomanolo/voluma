@@ -57,6 +57,10 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
+            List(selection: Binding<SidebarItem?>(
+                get: {
+                    if let b = place.browse, b.nativeRoot == "/", let f = Favorite.all.first(where: { $0.path == b.startPath }) { return .place(f.id) }
+                    return .section(place.section)
             List(Section.allCases, selection: Binding<Section?>(get: { place.section }, set: { if let s = $0 { navigate(section: s) } })) { s in
                 Label(s.rawValue, systemImage: s.icon).tag(s)
             }
