@@ -290,29 +290,50 @@ struct BrowserView: View {
             }.width(min: 110, ideal: 150)
             TableColumn("Size", value: \.size) { e in
                 Text(e.isDir ? "—" : formatBytes(Int64(e.size))).foregroundStyle(.secondary)
-            }.width(90)
-            TableColumn("Modified") { e in
-                Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
-                    .foregroundStyle(.secondary)
-            }.width(150)
+            }.width(min: 60, ideal: 80)
+            TableColumn("Kind", value: \.kindText) { e in
+                Text(e.kindText).foregroundStyle(.secondary).lineLimit(1)
+            }.width(min: 80, ideal: 130)
         }
         .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
-            let es = sorted.filter { ids.contains($0.id) }
-            if !es.isEmpty {
-                Button("Copy") { selection = ids; copySelection() }
-                if canWrite { Button("Paste") { paste() } }
-                if es.count == 1, let e = es.first {
-                    if isNative { Button("Reveal in Finder") { if let u = backend.hostURL(joinPath(path, e.name)) { NSWorkspace.shared.activateFileViewerSelecting([u]) } } }
-                    else if !e.isDir { Button("Export…") { export(e) } }
-                    if canWrite { Button("Rename…") { renameText = e.name; renaming = e } }
-                }
-                if canWrite { Button(isNative ? "Move to Trash…" : "Delete…", role: .destructive) { confirmDelete = es } }
-            } else if canWrite { Button("Paste") { paste() } }
+            let es = rows.filter { ids.contains($0.id) }
+            if !es.isEmpty { itemMenu(es, ids: ids) } else if canWrite { backgroundMenu }
         } primaryAction: { ids in
-            guard let e = sorted.first(where: { ids.contains($0.id) }) else { return }
-            if e.isDir { go(joinPath(path, e.name)) }
-            else if isNative, let u = backend.hostURL(joinPath(path, e.name)) { NSWorkspace.shared.open(u) }
-            else { export(e) }
+            guard let e = rows.first(where: { ids.contains($0.id) }) else { return }
+            open(e)
+        }
+        // ⌘C / ⌘X / ⌘V reach these through the responder chain, so text fields in the alerts keep working.
+        .onCopyCommand { copySelection(); return [] }
+        .onCutCommand { cutSelection(); return [] }
+        .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
+        .onKeyPress(.space) { quickLook(); return .handled }
+    }
+
+    private var grid: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 124), spacing: 8, alignment: .top)], spacing: 10) {
+                ForEach(rows) { e in
+                    VStack(spacing: 4) {
+                        Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 56, height: 56)
+                        Text(e.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(selection.contains(e.id) ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(selection.contains(e.id) ? Color.white : (e.hidden ? Color.secondary : Color.primary))
+                        TagDots(colors: FinderTag.dots(for: e))
+                    }
+                    .padding(6).frame(maxWidth: .infinity)
+                    .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .opacity(isCutRow(e) ? 0.4 : 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { open(e) }
+                    .onTapGesture { clickSelect(e) }
+                    .contextMenu {
+                        if !selection.contains(e.id) { Color.clear.frame(width: 0, height: 0).onAppear { selection = [e.id] } }
+                        itemMenu(selected.isEmpty ? [e] : selected, ids: Set((selected.isEmpty ? [e] : selected).map(\.id)))
+                    }
+                    .modifier(DragOut(url: url(e)))
+                }
+            }.padding(12)
         }
         // ⌘C / ⌘V reach these through the responder chain, so text fields in the alerts keep working.
         .onCopyCommand { copySelection(); return [] }
