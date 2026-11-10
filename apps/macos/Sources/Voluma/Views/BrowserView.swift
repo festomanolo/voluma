@@ -541,11 +541,72 @@ struct BrowserView: View {
         status = "Copied \(es.count) item\(es.count == 1 ? "" : "s")"
     }
 
-    func paste() {
+    func cutSelection() {
+        let es = selected
+        guard !es.isEmpty else { return }
+        guard canMoveFromHere else { copySelection(); status = "This volume is read-only, so the items were copied instead of cut"; return }
+        Clip.shared.copy(backend: backend, items: es.map { (joinPath(path, $0.name), $0) }, cut: true)
+        cutTick += 1
+        status = "Cut \(es.count) item\(es.count == 1 ? "" : "s") · paste to move them"
+    }
+
+    func paste(forceMove: Bool = false) {
         guard canWrite else { status = "Unlock writing first to paste into an image"; return }
-        let (dst, dir) = (backend, path)
         let src = Clip.shared.source()
-        if case .none = src { status = "Nothing to paste"; return }
+        let moving: Bool
+        switch src { case .clip: moving = forceMove || Clip.shared.isCut; case .files: moving = false; case .none: moving = false }
+        let cutBackend = Clip.shared.backend, cutItems = Clip.shared.items
+
+        switch src {
+        case .none: status = "Nothing to paste"
+        case .files(let urls):
+            if isNative { startTransfer(urls, mode: .copy, verb: "Pasted") } else { genericPaste(.files(urls), moving: false, cutBackend: nil, cutItems: []) }
+        case .clip(let sb, let items):
+            if isNative, sb.isNative, let urls = Optional(items.compactMap { sb.hostURL($0.path) }), urls.count == items.count {
+                startTransfer(urls, mode: moving ? .move : .copy, verb: moving ? "Moved" : "Pasted", clearCut: moving)
+            } else {
+                genericPaste(src, moving: moving, cutBackend: cutBackend, cutItems: cutItems)
+            }
+        }
+    }
+
+    /// Mounted volume → mounted volume (or Finder → here): the parallel engine.
+    private func startTransfer(_ urls: [URL], mode: FastTransfer.Mode, verb: String, clearCut: Bool = false) {
+        guard let dstDir = backend.hostURL(path) else { return }
+        let p = TransferProgress()
+        transfer = p; busy = true; status = nil
+        let placed = PlacedBox()
+        Task.detached(priority: .userInitiated) {
+            let r = FastTransfer.run(urls, into: dstDir, mode: mode, progress: p) { placed.add($0.lastPathComponent) }
+            await MainActor.run {
+                transfer = nil; busy = false
+                if clearCut { Clip.shared.items = []; Clip.shared.clearCut(); NSPasteboard.general.clearContents(); cutTick += 1 }
+                status = Self.summary(verb: verb, r)
+                load(select: placed.names)
+            }
+        }
+    }
+
+    static func summary(verb: String, _ r: FastTransfer.Result) -> String {
+        let n = r.items
+        var s: String
+        if r.cancelled { s = "Cancelled after \(r.files.formatted()) file\(r.files == 1 ? "" : "s")" }
+        else if r.renamed == n && n > 0 { s = "\(verb) \(n) item\(n == 1 ? "" : "s") instantly (same volume)" }
+        else {
+            s = "\(verb) \(r.files.formatted()) file\(r.files == 1 ? "" : "s")"
+            if r.bytes > 0 { s += " · \(formatBytes(r.bytes))" }
+            s += String(format: " in %.1f s", r.seconds)
+            if r.bytes > 1_000_000, r.seconds > 0.05 { s += " · \(formatBytes(Int64(Double(r.bytes) / r.seconds)))/s" }
+            else if r.seconds > 0.05 { s += " · \(Int(Double(r.files) / r.seconds).formatted()) files/s" }
+            if r.cloned > 0 { s += " · \(r.cloned.formatted()) cloned instantly" }
+        }
+        if r.errors > 0 { s += " · \(r.errors) failed" + (r.firstError.map { " (\($0))" } ?? "") }
+        return s
+    }
+
+    /// Any other pairing (disk images, the NTFS helper, ext4 …): the engine copies one file at a time.
+    private func genericPaste(_ src: Clip.Source, moving: Bool, cutBackend: FSBackend?, cutItems: [(path: String, entry: Listing.Entry)]) {
+        let (dst, dir) = (backend, path)
         busy = true
         status = "Pasting…"
         Task.detached {
