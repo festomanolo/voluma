@@ -17,6 +17,12 @@ struct Favorite: Identifiable {
     static let all: [Favorite] = {
         let home = NSHomeDirectory()
         let list: [(String, String, String)] = [
+            ("Home", "house", home), ("Desktop", "menubar.dock.rectangle", home + "/Desktop"), ("Documents", "doc", home + "/Documents"),
+            ("Downloads", "arrow.down.circle", home + "/Downloads"), ("Pictures", "photo", home + "/Pictures"),
+            ("Applications", "square.grid.2x2", "/Applications"),
+        ]
+        return list.filter { FileManager.default.fileExists(atPath: $0.2) }.map { Favorite(id: $0.0, title: $0.0, icon: $0.1, path: $0.2) }
+    }()
 }
 
 struct ContentView: View {
