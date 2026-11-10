@@ -523,16 +523,21 @@ struct BrowserView: View {
                 case .success: status = ok
                 case .failure(let e): status = "Failed: \(e.localizedDescription)"
                 }
-                load()
+                load(select: select)
             }
         }
     }
 
-    // MARK: copy / paste
+    // MARK: copy / cut / paste
+
+    /// Cut needs somewhere to remove the originals from: a writable volume.
+    private var canMoveFromHere: Bool { canWrite }
+
     func copySelection() {
         let es = selected
         guard !es.isEmpty else { return }
         Clip.shared.copy(backend: backend, items: es.map { (joinPath(path, $0.name), $0) })
+        cutTick += 1
         status = "Copied \(es.count) item\(es.count == 1 ? "" : "s")"
     }
 
