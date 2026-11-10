@@ -101,6 +101,7 @@ struct BrowserView: View {
                 .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 3).padding(4).allowsHitTesting(false) } }
                 .dropDestination(for: URL.self) { urls, _ in dropURLs(urls) } isTargeted: { dropTargeted = $0 }
             Divider()
+            pathBar
             footer
         }
         .background(shortcuts)
