@@ -239,6 +239,8 @@ struct BrowserView: View {
                 Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
             moreMenu
+            Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                .help("Show or hide the details panel (⌥⌘I)")
             TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 130).focused($filterFocused)
                 .onSubmit { filterFocused = false }
             if !isNative && !isHelper {
@@ -251,7 +253,28 @@ struct BrowserView: View {
                 .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
             }
-        }.padding(.horizontal, 14).padding(.vertical, 8)
+        }.labelStyle(.iconOnly).padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private var sortGroupMenu: some View {
+        Menu {
+            SwiftUI.Section("Sort By") {
+                ForEach(SortKey.allCases) { k in
+                    Button { sortOrder = k.comparators(ascending: sortKey == k ? ascending : true) } label: {
+                        if sortKey == k { Label(k.rawValue, systemImage: "checkmark") } else { Text(k.rawValue) }
+                    }
+                }
+                Divider()
+                Button { sortOrder = (sortKey ?? .name).comparators(ascending: true) } label: { if ascending { Label("Ascending", systemImage: "checkmark") } else { Text("Ascending") } }
+                Button { sortOrder = (sortKey ?? .name).comparators(ascending: false) } label: { if !ascending { Label("Descending", systemImage: "checkmark") } else { Text("Descending") } }
+            }
+            SwiftUI.Section("Group By") {
+                ForEach(GroupKey.allCases) { g in
+                    Button { groupBy = g.rawValue } label: { if group == g { Label(g.rawValue, systemImage: "checkmark") } else { Text(g.rawValue) } }
+                }
+            }
+        } label: { Label("Sort and Group", systemImage: "arrow.up.arrow.down.circle") }
+        .menuIndicator(.hidden).frame(width: 30).help("Sort By and Group By")
     }
 
     private var moreMenu: some View {
