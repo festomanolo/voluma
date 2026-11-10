@@ -37,11 +37,12 @@ echo "5. cross-volume copy and move (exFAT image)"
 hdiutil create -size 200m -fs ExFAT -volname FTTEST -layout NONE "$W/x.dmg" >/dev/null
 mkdir "$W/mnt"; hdiutil attach "$W/x.dmg" -mountpoint "$W/mnt" -nobrowse >/dev/null
 "$FT" copy "$W/src/tree" "$W/mnt" | grep -q "errors 0" || fail copy-exfat
-diff -r "$W/src/tree" "$W/mnt/tree" 2>&1 | grep -v "Directory loop" | grep -v '^$' && fail content-exfat || true
+# exFAT keeps the xattr in a "._empty" sidecar file, which is expected; everything else must match
+if diff -r "$W/src/tree" "$W/mnt/tree" 2>&1 | grep -v "Directory loop" | grep -v '\._empty$' | grep .; then fail content-exfat; fi
 cmp "$W/src/tree/a/b/big.bin" "$W/mnt/tree/a/b/big.bin" || fail bigfile
 cp -R "$W/src/tree" "$W/src/tree2"
 "$FT" move "$W/mnt/tree" "$W/dst" | grep -q "errors 0" || fail move-back
 [ ! -e "$W/mnt/tree" ] || fail source-removed
-find "$W/dst/tree copy 3" -name '._*' | grep -q . && fail sidecars-left || true
-diff -r "$W/src/tree2" "$W/dst/tree copy 3" || fail move-back-content
+find "$W/dst/tree copy 2" -name '._*' | grep -q . && fail sidecars-left || true
+diff -r "$W/src/tree2" "$W/dst/tree copy 2" || fail move-back-content
 echo "all FastTransfer tests passed"

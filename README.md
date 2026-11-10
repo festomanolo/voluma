@@ -32,7 +32,9 @@ Requires macOS 14 or later. The download is universal (Apple Silicon and Intel),
 | **Write to NTFS** | macOS mounts NTFS read-only. VOLUMA unmounts the volume, asks for your administrator password once, writes through its own NTFS driver, then remounts it. It refuses drives that Windows left dirty or hibernated. |
 | **Filesystems** | Read and write: NTFS, exFAT, FAT12/16/32. Read: ext2/3/4, APFS, HFS+/HFSX. |
 | **Disks view** | Every disk, partition, APFS container and volume as a collapsible tree, with capacity and free space, read from IOKit and DiskArbitration. Eject external drives from the same screen. |
-| **Copy and paste** | Between any two drives and with Finder. A name clash never overwrites. |
+| **Hyper-fast copy, cut and move** | Between mounted volumes and Finder, in parallel: a worker pool copies thousands of small files at once and splits big files into chunks. Copy on one APFS volume is an instant clone, and move on one volume is an instant rename. Cross-volume cut deletes each source file as soon as its copy lands. A name clash never overwrites. Progress, speed and ETA, with Cancel. |
+| **Finder, in VOLUMA** | Real Finder icons, Finder tag colours (set them from the menu, they show up in Finder), list and icon views, Quick Look (Space), Get Info, Duplicate, Make Alias, Compress, Open With, drag and drop, filter, show hidden, and Finder's keyboard shortcuts. Favorites in the sidebar open Home, Desktop, Documents and Downloads. |
+| **New file** | Create an empty file or start from a template (text, Markdown, JSON, HTML, shell, Python) on any writable volume, including NTFS, exFAT and FAT. ⌥⌘N. |
 | **Storage Lens** | Where your space went, by type, with Finder-style drill-down. Scans 3.3 million files in about 50 seconds. |
 | **Raw partitions** | Unmounted partitions (an ext4 drive, say) can be browsed through the same helper, read-only unless the driver can write. |
 
@@ -52,7 +54,19 @@ Intel Core i5-10310U, macOS 26.7.1. Drive tests use disk images, a 256 MB file, 
 | FAT32 read / write | 1,842 / 583 MB/s | macOS: 2,000 / 253 MB/s |
 | exFAT small files (2,000) | 175 files/s | macOS: 597 files/s |
 
-The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
+Transfer engine, measured on the same Mac (internal SATA SSD, source and destination on the same physical disk, so large files are disk-bound):
+
+| | VOLUMA | Reference |
+|---|---|---|
+| Copy 10,001 small files across volumes | 3.9 s | `cp -R`: 15.5 s, `ditto`: 13.4 s |
+| Copy 10,001 files within one APFS volume | 2.2 s (clones) | |
+| Copy a 1 GB file within one APFS volume | instant (clone) | |
+| Move a folder within one volume | 11 ms (rename) | |
+| Copy 1.3 GB of large files across volumes | 230 to 370 MB/s | `cp`: 240 to 320 MB/s (same disk, so no gain) |
+
+Large files are limited by the disk, not by the copy loop. The parallel gains show up with many files, and with clone and rename. Reproduce with `tests/bench/fasttransfer.sh`; correctness tests are in `tests/bench/fasttransfer_test.sh`.
+
+The last row of the first table is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
 
 ## How it is built
 
