@@ -204,6 +204,45 @@ enum InfoLoader {
     }
 }
 
+/// The details grid for one item (shared by Get Info and the inspector panel).
+struct ItemDetails: View {
+    let entry: Listing.Entry; let url: URL?
+    @State private var info = ItemInfo()
+    @State private var folderBytes: Int64?
+    @State private var computing = false
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 7) {
+            if url == nil {
+                row("Kind", entry.kindText)
+                if !entry.isDir { row("Size", "\(formatBytes(Int64(entry.size))) (\(entry.size.formatted()) bytes)") }
+                row("Modified", entry.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .long, time: .standard) } ?? "—")
+            } else {
+                ForEach(Array(info.rows.enumerated()), id: \.offset) { _, r in row(r.0, r.1) }
+                if entry.isDir { row("Size", folderBytes.map { "\(formatBytes($0)) on disk" } ?? (computing ? "Calculating…" : "—")) }
+            }
+        }
+        .task(id: (url?.path ?? "") + entry.name) {
+            folderBytes = nil
+            guard let url else { return }
+            info = InfoLoader.load(url, entry: entry)
+            if entry.isDir {
+                computing = true
+                let b = await Task.detached(priority: .utility) { InfoLoader.folderSize(url) }.value
+                if !Task.isCancelled { folderBytes = b }
+                computing = false
+            }
+        }
+    }
+
+    private func row(_ k: String, _ v: String) -> some View {
+        GridRow {
+            Text(k).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(v).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        }.font(.callout)
+    }
+}
+
 struct InfoSheet: View {
     let entry: Listing.Entry; let url: URL?; let size: UInt64
     @Environment(\.dismiss) private var dismiss
