@@ -448,6 +448,7 @@ struct BrowserView: View {
                     } header: { groupHeader(g) }
                 }
             }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
             .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
                 let es = rows.filter { ids.contains($0.id) }
                 if !es.isEmpty { itemMenu(es, ids: ids) } else if canWrite { backgroundMenu }
