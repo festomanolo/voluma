@@ -368,6 +368,89 @@ struct BrowserView: View {
         .onKeyPress(.space) { quickLook(); return .handled }
     }
 
+    private func gridCell(_ e: Listing.Entry) -> some View {
+        VStack(spacing: 4) {
+            Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 56, height: 56)
+            Text(e.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(selection.contains(e.id) ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .foregroundStyle(selection.contains(e.id) ? Color.white : (e.hidden ? Color.secondary : Color.primary))
+            TagDots(colors: FinderTag.dots(for: e))
+        }
+        .padding(6).frame(maxWidth: .infinity)
+        .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .opacity(isCutRow(e) ? 0.4 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { open(e) }
+        .onTapGesture { clickSelect(e) }
+        .contextMenu {
+            if !selection.contains(e.id) { Color.clear.frame(width: 0, height: 0).onAppear { selection = [e.id] } }
+            itemMenu(selected.isEmpty ? [e] : selected, ids: Set((selected.isEmpty ? [e] : selected).map(\.id)))
+        }
+        .modifier(DragOut(url: url(e)))
+    }
+
+    private func groupHeader(_ g: EntryGroup) -> some View {
+        HStack(spacing: 6) {
+            Text(g.title).font(.headline)
+            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+        }.padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The list with Finder-style segments (a Table cannot have section headers, so this is a List with a sortable header row).
+    private var groupedList: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                headerCell("Name", .name).frame(maxWidth: .infinity, alignment: .leading)
+                headerCell("Date Modified", .modified).frame(width: 150, alignment: .leading)
+                headerCell("Size", .size).frame(width: 80, alignment: .leading)
+                headerCell("Kind", .kind).frame(width: 130, alignment: .leading)
+            }.padding(.horizontal, 26).padding(.vertical, 4).background(.bar)
+            Divider()
+            List(selection: $selection) {
+                ForEach(groups) { g in
+                    SwiftUI.Section {
+                        ForEach(g.entries) { e in
+                            HStack(spacing: 0) {
+                                HStack(spacing: 7) {
+                                    Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 18, height: 18)
+                                    Text(e.name).lineLimit(1).foregroundStyle(e.hidden ? .secondary : .primary)
+                                    TagDots(colors: FinderTag.dots(for: e))
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
+                                    .frame(width: 150, alignment: .leading)
+                                Text(e.isDir ? "—" : formatBytes(Int64(e.size))).frame(width: 80, alignment: .leading)
+                                Text(e.kindText).lineLimit(1).frame(width: 130, alignment: .leading)
+                            }
+                            .foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
+                            .tag(e.id).modifier(DragOut(url: url(e)))
+                        }
+                    } header: { groupHeader(g) }
+                }
+            }
+            .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
+                let es = rows.filter { ids.contains($0.id) }
+                if !es.isEmpty { itemMenu(es, ids: ids) } else if canWrite { backgroundMenu }
+            } primaryAction: { ids in
+                if let e = rows.first(where: { ids.contains($0.id) }) { open(e) }
+            }
+            .onCopyCommand { copySelection(); return [] }
+            .onCutCommand { cutSelection(); return [] }
+            .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
+            .onKeyPress(.space) { quickLook(); return .handled }
+        }
+    }
+
+    private func headerCell(_ title: String, _ k: SortKey) -> some View {
+        Button { sortOrder = k.comparators(ascending: sortKey == k ? !ascending : true) } label: {
+            HStack(spacing: 3) {
+                Text(title).font(.caption.weight(.medium))
+                if sortKey == k { Image(systemName: ascending ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold)) }
+            }
+        }.buttonStyle(.plain).foregroundStyle(.secondary)
+    }
+
     private func clickSelect(_ e: Listing.Entry) {
         let f = NSEvent.modifierFlags
         if f.contains(.command) { if selection.contains(e.id) { selection.remove(e.id) } else { selection.insert(e.id) }; anchor = e.id }
