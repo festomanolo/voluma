@@ -206,9 +206,16 @@ struct BrowserView: View {
                     }
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
             if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
+
+            Picker("View", selection: $viewMode) {
+                Image(systemName: "list.bullet").tag(ViewMode.list.rawValue)
+                Image(systemName: "square.grid.2x2").tag(ViewMode.icons.rawValue)
+            }.pickerStyle(.segmented).frame(width: 74).labelsHidden().help("List (⌘1) or Icons (⌘2)")
+
             Button("Copy", systemImage: "doc.on.doc") { copySelection() }.disabled(selection.isEmpty).help("Copy selected items (⌘C)")
+            Button("Cut", systemImage: "scissors") { cutSelection() }.disabled(selection.isEmpty || !canMoveFromHere).help("Cut: the next paste moves the items (⌘X)")
             Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy).help(canWrite ? "Paste into this folder (⌘V)" : "Unlock writing to paste into this image")
             if canWrite {
                 Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }
