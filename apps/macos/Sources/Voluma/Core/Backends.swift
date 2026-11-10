@@ -40,15 +40,22 @@ struct NativeBackend: FSBackend {
     private func url(_ p: String) -> URL { p == "/" ? URL(fileURLWithPath: root) : URL(fileURLWithPath: root).appendingPathComponent(String(p.dropFirst())) }
 
     func list(_ p: String) throws -> Listing {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey, .contentModificationDateKey, .isHiddenKey, .isPackageKey]
-        let items = try FileManager.default.contentsOfDirectory(at: url(p), includingPropertiesForKeys: keys, options: [])
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isHiddenKey,
+                                      .isSymbolicLinkKey, .tagNamesKey, .labelNumberKey]
+        let dir = url(p)
+        let items = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [])
         let entries: [Listing.Entry] = items.map { u in
             let v = try? u.resourceValues(forKeys: Set(keys))
-            let dir = v?.isDirectory == true
-            return Listing.Entry(name: u.lastPathComponent, kind: dir ? "directory" : "file",
-                                 size: dir ? 0 : UInt64(max(0, v?.fileSize ?? 0)),
+            var isDir = v?.isDirectory == true
+            if v?.isSymbolicLink == true { var d: ObjCBool = false; isDir = FileManager.default.fileExists(atPath: u.path, isDirectory: &d) && d.boolValue }   // a link to a folder opens like a folder
+            let tags = v?.tagNames ?? []
+            return Listing.Entry(name: u.lastPathComponent, kind: isDir ? "directory" : "file",
+                                 size: isDir ? 0 : UInt64(max(0, v?.fileSize ?? 0)),
                                  modified: v?.contentModificationDate.map { Int64($0.timeIntervalSince1970) },
-                                 hidden: v?.isHidden == true || u.lastPathComponent.hasPrefix("."))
+                                 hidden: v?.isHidden == true || u.lastPathComponent.hasPrefix("."),
+                                 created: v?.creationDate.map { Int64($0.timeIntervalSince1970) },
+                                 tags: tags.isEmpty ? nil : tags,
+                                 label: (v?.labelNumber ?? 0) > 0 ? v?.labelNumber : nil)
         }
         return Listing(filesystem: "Mounted volume", label: nil, entries: entries,
                        capabilities: .init(read: true, write: true), driver_supports_write: true, write_blocked: nil)
