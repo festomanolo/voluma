@@ -240,7 +240,32 @@ struct BrowserView: View {
                 .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
             }
-        }.labelStyle(.iconOnly).padding(.horizontal, 14).padding(.vertical, 8)
+        }
+    }
+
+    /// Finder's path bar: where you are, one click to any parent.
+    private var pathBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                crumb(rootTitle, icon: "internaldrive", to: "/", last: crumbs.isEmpty)
+                ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
+                    crumb(c, icon: "folder.fill", to: "/" + crumbs[0...i].joined(separator: "/"), last: i == crumbs.count - 1)
+                }
+            }.padding(.horizontal, 12)
+        }
+        .defaultScrollAnchor(.trailing)
+        .frame(height: 26).background(.bar)
+    }
+
+    private func crumb(_ title: String, icon: String, to p: String, last: Bool) -> some View {
+        Button { go(p) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon).foregroundStyle(last ? Color.accentColor : Color.secondary.opacity(0.7))
+                Text(title).lineLimit(1)
+            }.font(.caption)
+        }
+        .buttonStyle(.plain).foregroundStyle(last ? .primary : .secondary).padding(.horizontal, 4)
     }
 
     private var sortGroupMenu: some View {
