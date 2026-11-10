@@ -620,7 +620,11 @@ struct BrowserView: View {
                     for it in items {
                         let before = taken
                         count += try Copier.copy(src: sb, srcPath: it.path, entry: it.entry, dst: dst, dstDir: dir, taken: &taken) { n in
-                            Task { @MainActor in status = "Pasting \(n)…" }
+                            Task { @MainActor in status = "\(moving ? "Moving" : "Pasting") \(n)…" }
+                        }
+                        movedNames += taken.subtracting(before).map { $0 }
+                        if moving { // the copy landed, so the original can go
+                            if sb.isNative, let u = sb.hostURL(it.path) { try FileManager.default.removeItem(at: u) } else { try sb.delete(it.path) }
                         }
                     }
                 case .files(let urls):
@@ -635,10 +639,78 @@ struct BrowserView: View {
             let (done, fail) = (count, failure)
             await MainActor.run {
                 busy = false
-                status = fail.map { "Paste stopped after \(done) item\(done == 1 ? "" : "s"): \($0)" } ?? "Pasted \(done) item\(done == 1 ? "" : "s")"
+                if moving && fail == nil { Clip.shared.items = []; Clip.shared.clearCut(); NSPasteboard.general.clearContents(); cutTick += 1 }
+                let verb = moving ? "Moved" : "Pasted"
+                status = fail.map { "\(verb) stopped after \(done) item\(done == 1 ? "" : "s"): \($0)" } ?? "\(verb) \(done) item\(done == 1 ? "" : "s")"
                 load()
             }
         }
+    }
+
+    /// Files dropped from Finder (or another VOLUMA window): same volume moves, other volumes copy, ⌥ forces a copy.
+    private func dropURLs(_ urls: [URL]) -> Bool {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty, canWrite, isNative, let dstDir = backend.hostURL(path) else { status = canWrite ? "Drop files onto a mounted volume" : "This volume is read-only"; return false }
+        if files.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL.path == dstDir.standardizedFileURL.path }) { return false }   // dropped where it already is
+        var d = stat(), s = stat()
+        let sameVolume = stat(dstDir.path, &d) == 0 && files.allSatisfy { stat($0.path, &s) == 0 && s.st_dev == d.st_dev }
+        let move = sameVolume && !NSEvent.modifierFlags.contains(.option)
+        startTransfer(files, mode: move ? .move : .copy, verb: move ? "Moved" : "Copied")
+        return true
+    }
+
+    // MARK: new file / folder
+
+    func openNewFile(_ t: FileTemplate) {
+        guard canWrite else { return }
+        newFileTemplate = t
+        newFileName = NameClash.unique(t.defaultName, taken: Set((listing?.entries ?? []).map { $0.name.lowercased() }))
+        showNewFile = true
+    }
+
+    private var newFileSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New File").font(.title3.weight(.semibold))
+            TextField("Name", text: $newFileName).textFieldStyle(.roundedBorder).onSubmit { createNewFile() }
+            Picker("Template", selection: $newFileTemplate) {
+                ForEach(FileTemplate.all) { t in Label(t.title, systemImage: t.symbol).tag(t) }
+            }
+            .onChange(of: newFileTemplate) { old, new in newFileName = Self.swapExtension(newFileName, from: old, to: new) }
+            Text("In \(path == "/" ? target.title : path)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { showNewFile = false }.keyboardShortcut(.cancelAction)
+                Button("Create") { createNewFile() }.keyboardShortcut(.defaultAction)
+                    .disabled(newFileName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }.padding(20).frame(width: 380)
+    }
+
+    static func swapExtension(_ name: String, from: FileTemplate, to: FileTemplate) -> String {
+        let ns = name as NSString
+        let base = ns.pathExtension == from.ext || from.ext.isEmpty && ns.pathExtension.isEmpty ? ns.deletingPathExtension : name
+        let stem = (base == "untitled file" || base.isEmpty) ? "untitled" : base
+        return to.ext.isEmpty ? (stem == "untitled" ? "untitled file" : stem) : "\(stem).\(to.ext)"
+    }
+
+    func createNewFile() {
+        let raw = newFileName.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        guard !raw.isEmpty else { return }
+        showNewFile = false
+        let name = NameClash.unique(raw, taken: Set((listing?.entries ?? []).map { $0.name.lowercased() }))   // never replaces an existing file
+        let (b, p, t) = (backend, joinPath(path, name), newFileTemplate)
+        run("Created \(name)", select: [name]) {
+            try b.createFile(p, contents: t.data)
+            if t.executable, let u = b.hostURL(p) { chmod(u.path, 0o755) }
+        }
+    }
+
+    func createFolder(_ raw: String) {
+        let n = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
+        guard !n.isEmpty else { return }
+        let name = NameClash.unique(n, taken: Set((listing?.entries ?? []).map { $0.name.lowercased() }))
+        let (b, p) = (backend, joinPath(path, name))
+        run("Created \(name)", select: [name]) { try b.mkdir(p) }
     }
 
     // MARK: other actions
