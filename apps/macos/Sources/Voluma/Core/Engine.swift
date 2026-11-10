@@ -68,6 +68,8 @@ struct Listing: Decodable {
         var label: Int? = nil
         var id: String { name }
         var isDir: Bool { kind == "directory" }
+        var modifiedSort: Int64 { modified ?? 0 }
+        var kindText: String { FileKinds.describe(self) }
     }
     struct Caps: Decodable { let read: Bool; let write: Bool }
     let filesystem: String; let label: String?; let entries: [Entry]; let capabilities: Caps; let driver_supports_write: Bool
