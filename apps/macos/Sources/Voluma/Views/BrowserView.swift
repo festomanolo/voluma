@@ -85,6 +85,9 @@ struct BrowserView: View {
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
     private var driverWritable: Bool { listing?.driver_supports_write ?? false }
     private var selected: [Listing.Entry] { rows.filter { selection.contains($0.id) } }
+    private var group: GroupKey { GroupKey(rawValue: groupBy) ?? .none }
+    private var sortKey: SortKey? { SortKey.of(sortOrder) }
+    private var ascending: Bool { sortOrder.first?.order != .reverse }
     private var mode: ViewMode { ViewMode(rawValue: viewMode) ?? .list }
     private var rootTitle: String { target.nativeRoot == "/" && target.startPath != "/" ? "Macintosh HD" : target.title }
 
