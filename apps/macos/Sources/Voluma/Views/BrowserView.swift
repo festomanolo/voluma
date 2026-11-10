@@ -51,11 +51,21 @@ struct BrowserView: View {
     @State private var confirmDelete: [Listing.Entry] = []
     @State private var newFolderName = ""
     @State private var showNewFolder = false
+    @State private var showNewFile = false
+    @State private var newFileName = "untitled.txt"
+    @State private var newFileTemplate = FileTemplate.all[1]
     @State private var renaming: Listing.Entry?
     @State private var renameText = ""
+    @State private var infoEntry: Listing.Entry?
+    @State private var anchor: Listing.Entry.ID?
 
     @State private var confirmNtfs = false
     @State private var enablingNtfs = false
+
+    init(target: BrowseTarget) {
+        self.target = target
+        _path = State(initialValue: target.startPath)
+    }
 
     private var backend: FSBackend {
         if target.viaHelper, let b = target.bsd, let s = NtfsSessions.shared.session(for: b) { return HelperBackend(session: s) }
