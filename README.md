@@ -58,6 +58,7 @@ Transfer engine, measured on the same Mac (internal SATA SSD, source and destina
 
 | | VOLUMA | Reference |
 |---|---|---|
+| Copy 10,001 small files across volumes | 3.9 s | `cp -R`: 15.5 s, `ditto`: 13.4 s |
 The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
 
 ## How it is built
