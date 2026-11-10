@@ -11,6 +11,12 @@ enum Section: String, CaseIterable, Identifiable {
 enum SidebarItem: Hashable { case section(Section), place(String) }
 
 /// Finder-style shortcuts to the folders you use every day, browsed natively with the full set of Finder actions.
+struct Favorite: Identifiable {
+    let id: String; let title: String; let icon: String; let path: String
+    var target: BrowseTarget { BrowseTarget(image: "", part: -1, title: "Macintosh HD", nativeRoot: "/", startPath: path) }
+    static let all: [Favorite] = {
+        let home = NSHomeDirectory()
+        let list: [(String, String, String)] = [
 }
 
 struct ContentView: View {
