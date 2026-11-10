@@ -14,10 +14,15 @@ struct BrowseTarget: Hashable {
     var viaHelper = false
     /// The partition was never mounted by macOS (e.g. ext4): browsed raw through the helper, nothing to remount.
     var rawOnly = false
+    /// Folder to open first (Favorites open Desktop, Downloads … directly).
+    var startPath = "/"
 }
 
+enum ViewMode: String { case list, icons }
+
 /// Finder-style browser for a disk image/partition (Rust engine) or a mounted volume (native).
-/// Copy/paste works between any two: within a volume, across volumes, and with Finder.
+/// Copy, cut and paste work between any two, within a volume, across volumes, and with Finder.
+/// Between mounted volumes they run on `FastTransfer`: parallel, cloning and renaming wherever the disk allows.
 struct BrowserView: View {
     let target: BrowseTarget
     @EnvironmentObject var nav: NavState
