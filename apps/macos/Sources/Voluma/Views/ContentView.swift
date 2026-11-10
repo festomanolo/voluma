@@ -176,7 +176,7 @@ struct ContentView: View {
         .alert("Couldn’t open the partition", isPresented: Binding(get: { rawError != nil }, set: { if !$0 { rawError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(rawError ?? "") }
-        .frame(minWidth: 960, minHeight: 600)
+        .frame(minWidth: 820, minHeight: 520)
     }
 }
 

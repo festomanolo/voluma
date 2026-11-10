@@ -45,7 +45,6 @@ struct BrowserView: View {
     @AppStorage("voluma.viewMode") private var viewMode = ViewMode.list.rawValue
     @AppStorage("voluma.showHidden") private var showHidden = false
     @State private var filter = ""
-    @FocusState private var filterFocused: Bool
     @State private var dropTargeted = false
     // Writing into an IMAGE is OFF by default and per-window; every mutation is validated again in Rust.
     // Mounted volumes behave like Finder: copying in is allowed, deleting goes to the Trash.
@@ -96,17 +95,18 @@ struct BrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbarRow
-            Divider()
             if needsNtfsUnlock { ntfsBanner }
             if isHelper { helperBanner }
             content
                 .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 3).padding(4).allowsHitTesting(false) } }
                 .dropDestination(for: URL.self) { urls, _ in dropURLs(urls) } isTargeted: { dropTargeted = $0 }
             Divider()
+            pathBar
             footer
         }
         .background(shortcuts)
+        .searchable(text: $filter, placement: .toolbar, prompt: "Filter")
+        .toolbar { windowToolbar }
         .onAppear { load(); publishNav() }
         .onDisappear { if isHelper, let b = target.bsd { Task { _ = await NtfsSessions.shared.end(bsd: b) } } }
         .confirmationDialog("Enable writing to “\(target.title)”?", isPresented: $confirmNtfs, titleVisibility: .visible) {
@@ -205,55 +205,67 @@ struct BrowserView: View {
 
     // MARK: toolbar
 
-    private var toolbarRow: some View {
-        HStack(spacing: 6) {
-            Button { goBack() } label: { Image(systemName: "chevron.left") }.disabled(backStack.isEmpty).help("Previous folder (⌘[)")
-            Button { goForward() } label: { Image(systemName: "chevron.right") }.disabled(forwardStack.isEmpty).help("Next folder (⌘])")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    Button(rootTitle) { go("/") }.buttonStyle(.link)
-                    ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                        Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
-                    }
-                }
-            }
-            Spacer(minLength: 8)
-            if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
-
-            sortGroupMenu
+    @ToolbarContentBuilder private var windowToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button { goForward() } label: { Label("Forward", systemImage: "chevron.right") }
+                .disabled(forwardStack.isEmpty).help("Next folder (⌘])")
+        }
+        ToolbarItem {
             Picker("View", selection: $viewMode) {
-                Image(systemName: "list.bullet").tag(ViewMode.list.rawValue)
-                Image(systemName: "square.grid.2x2").tag(ViewMode.icons.rawValue)
-            }.pickerStyle(.segmented).frame(width: 74).labelsHidden().help("List (⌘1) or Icons (⌘2)")
-
-            Button("Copy", systemImage: "doc.on.doc") { copySelection() }.disabled(selection.isEmpty).help("Copy selected items (⌘C)")
-            Button("Cut", systemImage: "scissors") { cutSelection() }.disabled(selection.isEmpty || !canMoveFromHere).help("Cut: the next paste moves the items (⌘X)")
-            Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy).help(canWrite ? "Paste into this folder (⌘V)" : "Unlock writing to paste into this image")
+                Label("List", systemImage: "list.bullet").tag(ViewMode.list.rawValue)
+                Label("Icons", systemImage: "square.grid.2x2").tag(ViewMode.icons.rawValue)
+            }.pickerStyle(.segmented).help("List (⌘1) or Icons (⌘2)")
+        }
+        ToolbarItem { sortGroupMenu }
+        ToolbarItemGroup {
             if canWrite {
-                Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }.help("New Folder (⇧⌘N)")
+                Button { newFolderName = ""; showNewFolder = true } label: { Label("New Folder", systemImage: "folder.badge.plus") }
+                    .help("New Folder (⇧⌘N)")
                 Menu {
                     ForEach(FileTemplate.all) { t in Button(t.title, systemImage: t.symbol) { openNewFile(t) } }
                 } label: { Label("New File", systemImage: "doc.badge.plus") } primaryAction: { openNewFile(FileTemplate.all[1]) }
                 .help("New File (⌥⌘N)")
-                Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
             moreMenu
             Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show or hide the details panel (⌥⌘I)")
-            TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 130).focused($filterFocused)
-                .onSubmit { filterFocused = false }
-            if !isNative && !isHelper {
+        }
+        if !isNative && !isHelper {
+            ToolbarItem {
                 Button {
                     if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
                 } label: {
                     Label(writeUnlocked ? "Writable" : "Read-only", systemImage: writeUnlocked ? "lock.open.fill" : "lock.fill")
-                        .foregroundStyle(writeUnlocked ? .orange : .secondary)
                 }
                 .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
             }
-        }.labelStyle(.iconOnly).padding(.horizontal, 14).padding(.vertical, 8)
+        }
+    }
+
+    /// Finder's path bar: where you are, one click to any parent.
+    private var pathBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                crumb(rootTitle, icon: "internaldrive", to: "/", last: crumbs.isEmpty)
+                ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
+                    crumb(c, icon: "folder.fill", to: "/" + crumbs[0...i].joined(separator: "/"), last: i == crumbs.count - 1)
+                }
+            }.padding(.horizontal, 12)
+        }
+        .defaultScrollAnchor(.trailing)
+        .frame(height: 26).background(.bar)
+    }
+
+    private func crumb(_ title: String, icon: String, to p: String, last: Bool) -> some View {
+        Button { go(p) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon).foregroundStyle(last ? Color.accentColor : Color.secondary.opacity(0.7))
+                Text(title).lineLimit(1)
+            }.font(.caption)
+        }
+        .buttonStyle(.plain).foregroundStyle(last ? .primary : .secondary).padding(.horizontal, 4)
     }
 
     private var sortGroupMenu: some View {
@@ -273,12 +285,17 @@ struct BrowserView: View {
                     Button { groupBy = g.rawValue } label: { if group == g { Label(g.rawValue, systemImage: "checkmark") } else { Text(g.rawValue) } }
                 }
             }
-        } label: { Label("Sort and Group", systemImage: "arrow.up.arrow.down.circle") }
-        .menuIndicator(.hidden).frame(width: 30).help("Sort By and Group By")
+        } label: { Label("Sort and Group", systemImage: "square.grid.3x1.below.line.grid.1x2") }
+        .help("Sort By and Group By")
     }
 
     private var moreMenu: some View {
         Menu {
+            Button("Copy", systemImage: "doc.on.doc") { copySelection() }.disabled(selection.isEmpty)
+            Button("Cut", systemImage: "scissors") { cutSelection() }.disabled(selection.isEmpty || !canMoveFromHere)
+            Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy)
+            Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }.disabled(!canWrite)
+            Divider()
             Button("Get Info", systemImage: "info.circle") { showInfo() }.disabled(selection.count != 1)
             Button("Quick Look", systemImage: "eye") { quickLook() }.disabled(selection.isEmpty)
             Divider()
@@ -289,8 +306,8 @@ struct BrowserView: View {
             Divider()
             Toggle("Show Hidden Files", isOn: $showHidden)
             Button("Select All", systemImage: "checkmark.circle") { selection = Set(rows.map(\.id)) }
-        } label: { Image(systemName: "ellipsis.circle") }
-        .menuIndicator(.hidden).frame(width: 30).help("More actions")
+        } label: { Label("Actions", systemImage: "ellipsis.circle") }
+        .help("Copy, Cut, Paste and more")
     }
 
     // MARK: content
@@ -354,7 +371,7 @@ struct BrowserView: View {
                     SwiftUI.Section {
                         ForEach(g.entries) { e in gridCell(e) }
                     } header: {
-                        if group != .none { groupHeader(g).background(.regularMaterial) }
+                        if group != .none { groupHeader(g).background(.bar) }
                     }
                 }
             }.padding(12)
@@ -392,10 +409,10 @@ struct BrowserView: View {
 
     private func groupHeader(_ g: EntryGroup) -> some View {
         HStack(spacing: 6) {
-            Text(g.title).font(.headline)
-            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.secondary)
+            Text(g.title).font(.subheadline.weight(.semibold))
+            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.tertiary)
             Spacer()
-        }.padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.horizontal, 10).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The list with Finder-style segments (a Table cannot have section headers, so this is a List with a sortable header row).
@@ -406,7 +423,7 @@ struct BrowserView: View {
                 headerCell("Date Modified", .modified).frame(width: 150, alignment: .leading)
                 headerCell("Size", .size).frame(width: 80, alignment: .leading)
                 headerCell("Kind", .kind).frame(width: 130, alignment: .leading)
-            }.padding(.horizontal, 26).padding(.vertical, 4).background(.bar)
+            }.padding(.horizontal, 20).padding(.vertical, 4).background(.bar)
             Divider()
             List(selection: $selection) {
                 ForEach(groups) { g in
@@ -423,12 +440,15 @@ struct BrowserView: View {
                                 Text(e.isDir ? "—" : formatBytes(Int64(e.size))).frame(width: 80, alignment: .leading)
                                 Text(e.kindText).lineLimit(1).frame(width: 130, alignment: .leading)
                             }
-                            .foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
+                            .font(.callout).foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
                             .tag(e.id).modifier(DragOut(url: url(e)))
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
                         }
                     } header: { groupHeader(g) }
                 }
             }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
             .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
                 let es = rows.filter { ids.contains($0.id) }
                 if !es.isEmpty { itemMenu(es, ids: ids) } else if canWrite { backgroundMenu }
@@ -522,7 +542,7 @@ struct BrowserView: View {
             Button("") { openNewFile(FileTemplate.all[1]) }.keyboardShortcut("n", modifiers: [.command, .option]).disabled(!canWrite)
             Button("") { duplicate() }.keyboardShortcut("d", modifiers: .command).disabled(selection.isEmpty || !canWrite)
             Button("") { showInfo() }.keyboardShortcut("i", modifiers: .command).disabled(selection.count != 1)
-            Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite || filterFocused)
+            Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite)
             Button("") { paste(forceMove: true) }.keyboardShortcut("v", modifiers: [.command, .option]).disabled(!canWrite || busy)
             Button("") { copyPath() }.keyboardShortcut("c", modifiers: [.command, .option]).disabled(selection.isEmpty)
             Button("") { showInspector.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
@@ -531,11 +551,10 @@ struct BrowserView: View {
             Button("") { if let e = selected.first { open(e) } }.keyboardShortcut(.downArrow, modifiers: .command).disabled(selection.isEmpty)
             Button("") { viewMode = ViewMode.list.rawValue }.keyboardShortcut("1", modifiers: .command)
             Button("") { viewMode = ViewMode.icons.rawValue }.keyboardShortcut("2", modifiers: .command)
-            Button("") { filterFocused = true }.keyboardShortcut("f", modifiers: .command)
             Button("") { makeAlias() }.keyboardShortcut("a", modifiers: [.command, .control]).disabled(selection.isEmpty || !canWrite || !isNative)
             Button("") { goBack() }.keyboardShortcut("[", modifiers: .command).disabled(backStack.isEmpty)
             Button("") { goForward() }.keyboardShortcut("]", modifiers: .command).disabled(forwardStack.isEmpty)
-            if mode == .icons { Button("") { selection = Set(rows.map(\.id)) }.keyboardShortcut("a", modifiers: .command).disabled(filterFocused) }
+            if mode == .icons { Button("") { selection = Set(rows.map(\.id)) }.keyboardShortcut("a", modifiers: .command) }
         }
         .frame(width: 0, height: 0).opacity(0).allowsHitTesting(false)
     }
