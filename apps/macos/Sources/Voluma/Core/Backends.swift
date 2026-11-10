@@ -91,17 +91,7 @@ func joinPath(_ a: String, _ b: String) -> String { a == "/" ? "/\(b)" : "\(a)/\
 enum Copier {
     struct CopyError: LocalizedError { let message: String; var errorDescription: String? { message } }
 
-    static func uniqueName(_ name: String, taken: Set<String>) -> String {
-        if !taken.contains(name.lowercased()) { return name }
-        let ns = name as NSString
-        let (base, ext) = (ns.deletingPathExtension, ns.pathExtension)
-        var n = 1
-        while true {
-            let cand = (n == 1 ? "\(base) copy" : "\(base) copy \(n)") + (ext.isEmpty ? "" : ".\(ext)")
-            if !taken.contains(cand.lowercased()) { return cand }
-            n += 1
-        }
-    }
+    static func uniqueName(_ name: String, taken: Set<String>) -> String { NameClash.unique(name, taken: taken) }
 
     static func takenNames(_ b: FSBackend, _ dir: String) -> Set<String> {
         Set(((try? b.list(dir))?.entries ?? []).map { $0.name.lowercased() })
@@ -164,11 +154,18 @@ final class Clip: @unchecked Sendable {
     var backend: FSBackend?
     var items: [(path: String, entry: Listing.Entry)] = []
     var promises: [PromiseDelegate] = []   // keep file-promise delegates alive while on the pasteboard
+    /// Cut (⌘X): the next paste moves the items instead of copying them. Nothing is removed until the paste lands.
+    private(set) var isCut = false
+
+    func isCutItem(backendID: String, path: String) -> Bool {
+        isCut && backend?.id == backendID && items.contains { $0.path == path }
+    }
+    func clearCut() { isCut = false }
 
     /// Puts the selection on the system pasteboard (file URLs for native volumes, lazy file promises for
     /// images, so Finder can paste both) and remembers it for in-app paste.
-    func copy(backend: FSBackend, items: [(path: String, entry: Listing.Entry)]) {
-        self.backend = backend; self.items = items; token = UUID().uuidString; promises = []
+    func copy(backend: FSBackend, items: [(path: String, entry: Listing.Entry)], cut: Bool = false) {
+        self.backend = backend; self.items = items; token = UUID().uuidString; promises = []; isCut = cut
         let pb = NSPasteboard.general
         pb.clearContents()
         if backend.isNative {
