@@ -246,9 +246,6 @@ struct ItemDetails: View {
 struct InfoSheet: View {
     let entry: Listing.Entry; let url: URL?; let size: UInt64
     @Environment(\.dismiss) private var dismiss
-    @State private var info = ItemInfo()
-    @State private var folderBytes: Int64?
-    @State private var computing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
