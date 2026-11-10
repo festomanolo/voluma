@@ -291,6 +291,11 @@ struct BrowserView: View {
 
     private var moreMenu: some View {
         Menu {
+            Button("Copy", systemImage: "doc.on.doc") { copySelection() }.disabled(selection.isEmpty)
+            Button("Cut", systemImage: "scissors") { cutSelection() }.disabled(selection.isEmpty || !canMoveFromHere)
+            Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy)
+            Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }.disabled(!canWrite)
+            Divider()
             Button("Get Info", systemImage: "info.circle") { showInfo() }.disabled(selection.count != 1)
             Button("Quick Look", systemImage: "eye") { quickLook() }.disabled(selection.isEmpty)
             Divider()
