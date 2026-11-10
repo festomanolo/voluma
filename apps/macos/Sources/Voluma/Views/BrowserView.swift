@@ -714,9 +714,102 @@ struct BrowserView: View {
     }
 
     // MARK: other actions
+
     func deleteSelected(_ es: [Listing.Entry]) {
         let (b, dir) = (backend, path)
-        run("Deleted \(es.count) item\(es.count == 1 ? "" : "s")") { for e in es { try b.delete(joinPath(dir, e.name)) } }
+        run("\(isNative ? "Moved to Trash" : "Deleted") \(es.count) item\(es.count == 1 ? "" : "s")") { for e in es { try b.delete(joinPath(dir, e.name)) } }
+    }
+
+    func duplicate() {
+        let es = selected
+        guard !es.isEmpty, canWrite else { return }
+        if isNative {
+            startTransfer(es.compactMap { url($0) }, mode: .copy, verb: "Duplicated")
+        } else {
+            let (b, dir) = (backend, path)
+            run("Duplicated \(es.count) item\(es.count == 1 ? "" : "s")") {
+                var taken = Copier.takenNames(b, dir)
+                for e in es { try Copier.copy(src: b, srcPath: joinPath(dir, e.name), entry: e, dst: b, dstDir: dir, taken: &taken) { _ in } }
+            }
+        }
+    }
+
+    func makeAlias() {
+        let urls = selected.compactMap { url($0) }
+        guard isNative, !urls.isEmpty else { return }
+        run("Made \(urls.count) alias\(urls.count == 1 ? "" : "es")") {
+            for u in urls {
+                let dir = u.deletingLastPathComponent()
+                var taken = Set(((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).map { $0.lowercased() })
+                taken.insert("") ; let name = NameClash.unique(u.lastPathComponent + " alias", taken: taken)
+                let data = try u.bookmarkData(options: .suitableForBookmarkFile)
+                try URL.writeBookmarkData(data, to: dir.appendingPathComponent(name))
+            }
+        }
+    }
+
+    func compress() {
+        let es = selected, dirURL = backend.hostURL(path)
+        guard isNative, !es.isEmpty, let dir = dirURL else { return }
+        let single = es.count == 1
+        let base = single ? es[0].name : "Archive"
+        let zip = NameClash.unique(base + ".zip", taken: Set((listing?.entries ?? []).map { $0.name.lowercased() }))
+        let names = es.map(\.name)
+        run("Compressed to \(zip)", select: [zip]) {
+            let p = Process()
+            p.currentDirectoryURL = dir
+            if single { p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto"); p.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", names[0], zip] }
+            else { p.executableURL = URL(fileURLWithPath: "/usr/bin/zip"); p.arguments = ["-r", "-y", "-q", zip] + names }
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try p.run(); p.waitUntilExit()
+            if p.terminationStatus != 0 { throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "compression failed (\(p.terminationStatus))"]) }
+        }
+    }
+
+    func copyPath() {
+        let paths = selected.map { e -> String in
+            if let u = url(e) { return u.path }
+            return joinPath(path, e.name)
+        }
+        guard !paths.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents(); pb.setString(paths.joined(separator: "\n"), forType: .string)
+        status = "Copied path\(paths.count == 1 ? "" : "s") as text"
+    }
+
+    func applyTag(_ t: FinderTag) {
+        let urls = selected.compactMap { url($0) }
+        let names = selected.map(\.id)
+        guard !urls.isEmpty else { return }
+        let ok = FinderTag.toggle(t, on: urls)
+        status = ok ? "Tagged \(urls.count) item\(urls.count == 1 ? "" : "s")" : "Couldn’t set the tag on some items"
+        load(select: names)
+    }
+
+    func clearTags() {
+        let urls = selected.compactMap { url($0) }, names = selected.map(\.id)
+        FinderTag.clear(on: urls); status = "Removed tags"; load(select: names)
+    }
+
+    func showInfo() { if selection.count == 1, let e = selected.first { infoEntry = e } }
+
+    func quickLook() {
+        let es = selected
+        guard !es.isEmpty else { return }
+        if isNative { QuickLook.shared.toggle(es.compactMap { url($0) }); return }
+        // images / helper volumes: export the first file to a temp folder so Quick Look can read it
+        guard let e = es.first, !e.isDir else { return }
+        let b = backend, src = joinPath(path, e.name)
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("voluma-ql-\(UUID().uuidString.prefix(6))")
+        status = "Preparing preview…"
+        Task.detached {
+            try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            let dest = tmp.appendingPathComponent(e.name)
+            let r = Result { try b.exportFile(src, to: dest) }
+            await MainActor.run {
+                if case .success = r { status = nil; QuickLook.shared.toggle([dest]) } else { status = "Couldn’t preview \(e.name)" }
+            }
+        }
     }
 
     func importFiles() {
@@ -726,6 +819,7 @@ struct BrowserView: View {
         panel.message = "Choose files or folders to copy into \(path)"
         guard panel.runModal() == .OK else { return }
         let (dst, dir, urls) = (backend, path, panel.urls)
+        if isNative { startTransfer(urls, mode: .copy, verb: "Imported"); return }
         run("Imported \(urls.count) item\(urls.count == 1 ? "" : "s")") {
             var taken = Copier.takenNames(dst, dir)
             for u in urls { try Copier.copyHost(u, dst: dst, dstDir: dir, taken: &taken) { _ in } }
@@ -751,5 +845,20 @@ struct BrowserView: View {
                 }
             }
         }
+    }
+}
+
+/// Thread-safe list of the names a transfer placed, so they can be selected when it finishes.
+final class PlacedBox: @unchecked Sendable {
+    private let lock = NSLock(); private var _names: [String] = []
+    func add(_ n: String) { lock.lock(); _names.append(n); lock.unlock() }
+    var names: [String] { lock.lock(); defer { lock.unlock() }; return _names }
+}
+
+/// Drag a row out to Finder, the Desktop or another app (mounted volumes only).
+private struct DragOut: ViewModifier {
+    let url: URL?
+    func body(content: Content) -> some View {
+        if let url { content.draggable(url) } else { content }
     }
 }
