@@ -608,15 +608,17 @@ struct BrowserView: View {
     private func genericPaste(_ src: Clip.Source, moving: Bool, cutBackend: FSBackend?, cutItems: [(path: String, entry: Listing.Entry)]) {
         let (dst, dir) = (backend, path)
         busy = true
-        status = "Pasting…"
+        status = moving ? "Moving…" : "Pasting…"
         Task.detached {
             var count = 0
             var failure: String?
+            var movedNames: [String] = []
             do {
                 var taken = Copier.takenNames(dst, dir)
                 switch src {
                 case .clip(let sb, let items):
                     for it in items {
+                        let before = taken
                         count += try Copier.copy(src: sb, srcPath: it.path, entry: it.entry, dst: dst, dstDir: dir, taken: &taken) { n in
                             Task { @MainActor in status = "Pasting \(n)…" }
                         }
