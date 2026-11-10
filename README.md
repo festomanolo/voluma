@@ -33,7 +33,8 @@ Requires macOS 14 or later. The download is universal (Apple Silicon and Intel),
 | **Filesystems** | Read and write: NTFS, exFAT, FAT12/16/32. Read: ext2/3/4, APFS, HFS+/HFSX. |
 | **Disks view** | Every disk, partition, APFS container and volume as a collapsible tree, with capacity and free space, read from IOKit and DiskArbitration. Eject external drives from the same screen. |
 | **Hyper-fast copy, cut and move** | Between mounted volumes and Finder, in parallel: a worker pool copies thousands of small files at once and splits big files into chunks. Copy on one APFS volume is an instant clone, and move on one volume is an instant rename. Cross-volume cut deletes each source file as soon as its copy lands. A name clash never overwrites. Progress, speed and ETA, with Cancel. |
-| **Copy and paste** | Between any two drives and with Finder. A name clash never overwrites. |
+| **Finder, in VOLUMA** | Real Finder icons, Finder tag colours (set them from the menu, they show up in Finder), list and icon views, Quick Look (Space), Get Info, Duplicate, Make Alias, Compress, Open With, drag and drop, filter, show hidden, and Finder's keyboard shortcuts. Favorites in the sidebar open Home, Desktop, Documents and Downloads. |
+| **New file** | Create an empty file or start from a template (text, Markdown, JSON, HTML, shell, Python) on any writable volume, including NTFS, exFAT and FAT. ⌥⌘N. |
 | **Storage Lens** | Where your space went, by type, with Finder-style drill-down. Scans 3.3 million files in about 50 seconds. |
 | **Raw partitions** | Unmounted partitions (an ext4 drive, say) can be browsed through the same helper, read-only unless the driver can write. |
 
