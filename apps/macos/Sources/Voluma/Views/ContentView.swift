@@ -101,6 +101,7 @@ struct ContentView: View {
             List(selection: Binding<SidebarItem?>(
                 get: {
                     if let b = place.browse, b.nativeRoot == "/", let f = Favorite.all.first(where: { $0.path == b.startPath }) { return .place(f.id) }
+                    if let b = place.browse, let bsd = b.bsd { return .location(bsd) }
                     return .section(place.section)
                 },
                 set: { item in
