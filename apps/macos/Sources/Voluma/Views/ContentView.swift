@@ -143,21 +143,7 @@ struct ContentView: View {
                                       lens.start(url: URL(fileURLWithPath: m), title: node.title, volume: node)
                                       navigate(section: .lens)
                                   },
-                                  openBrowse: { node in
-                                      guard let m = node.mountPath else {
-                                          // Unmounted partition: read it raw through the helper (admin prompt unless the device is ours).
-                                          Task { @MainActor in
-                                              do {
-                                                  _ = try await NtfsSessions.shared.start(bsd: node.bsd, title: node.title, mounted: false)
-                                                  navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, bsd: node.bsd, viaHelper: true, rawOnly: true))
-                                              } catch { rawError = error.localizedDescription }
-                                          }
-                                          return
-                                      }
-                                      let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
-                                      navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m,
-                                                                    bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
-                                  })
+                                  openBrowse: { node in browse(node) })
                     case .lens: LensView(model: lens, monitor: monitor)
                     case .images: ImageInspectorView(report: report, error: errorText, open: { importing = true },
                                                      browse: { navigate(section: .images, browse: $0) })
