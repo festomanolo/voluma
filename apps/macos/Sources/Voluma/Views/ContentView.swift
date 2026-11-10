@@ -8,6 +8,11 @@ enum Section: String, CaseIterable, Identifiable {
     }
 }
 
+enum SidebarItem: Hashable { case section(Section), place(String) }
+
+/// Finder-style shortcuts to the folders you use every day, browsed natively with the full set of Finder actions.
+}
+
 struct ContentView: View {
     /// Where the window is: a section, optionally with a browser open on top of it.
     struct Place: Equatable { var section: Section; var browse: BrowseTarget? }
