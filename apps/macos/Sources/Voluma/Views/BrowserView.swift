@@ -105,6 +105,8 @@ struct BrowserView: View {
             footer
         }
         .background(shortcuts)
+        .searchable(text: $filter, placement: .toolbar, prompt: "Filter")
+        .toolbar { windowToolbar }
         .onAppear { load(); publishNav() }
         .onDisappear { if isHelper, let b = target.bsd { Task { _ = await NtfsSessions.shared.end(bsd: b) } } }
         .confirmationDialog("Enable writing to “\(target.title)”?", isPresented: $confirmNtfs, titleVisibility: .visible) {
