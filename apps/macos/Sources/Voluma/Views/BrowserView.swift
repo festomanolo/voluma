@@ -236,7 +236,6 @@ struct BrowserView: View {
                     if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
                 } label: {
                     Label(writeUnlocked ? "Writable" : "Read-only", systemImage: writeUnlocked ? "lock.open.fill" : "lock.fill")
-                        .foregroundStyle(writeUnlocked ? .orange : .secondary)
                 }
                 .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
