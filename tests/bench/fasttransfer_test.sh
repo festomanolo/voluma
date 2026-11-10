@@ -39,3 +39,9 @@ mkdir "$W/mnt"; hdiutil attach "$W/x.dmg" -mountpoint "$W/mnt" -nobrowse >/dev/n
 "$FT" copy "$W/src/tree" "$W/mnt" | grep -q "errors 0" || fail copy-exfat
 diff -r "$W/src/tree" "$W/mnt/tree" 2>&1 | grep -v "Directory loop" | grep -v '^$' && fail content-exfat || true
 cmp "$W/src/tree/a/b/big.bin" "$W/mnt/tree/a/b/big.bin" || fail bigfile
+cp -R "$W/src/tree" "$W/src/tree2"
+"$FT" move "$W/mnt/tree" "$W/dst" | grep -q "errors 0" || fail move-back
+[ ! -e "$W/mnt/tree" ] || fail source-removed
+find "$W/dst/tree copy 3" -name '._*' | grep -q . && fail sidecars-left || true
+diff -r "$W/src/tree2" "$W/dst/tree copy 3" || fail move-back-content
+echo "all FastTransfer tests passed"
