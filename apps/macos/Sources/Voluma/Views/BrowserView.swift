@@ -356,17 +356,6 @@ struct BrowserView: View {
                     } header: {
                         if group != .none { groupHeader(g).background(.regularMaterial) }
                     }
-                    .padding(6).frame(maxWidth: .infinity)
-                    .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                    .opacity(isCutRow(e) ? 0.4 : 1)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { open(e) }
-                    .onTapGesture { clickSelect(e) }
-                    .contextMenu {
-                        if !selection.contains(e.id) { Color.clear.frame(width: 0, height: 0).onAppear { selection = [e.id] } }
-                        itemMenu(selected.isEmpty ? [e] : selected, ids: Set((selected.isEmpty ? [e] : selected).map(\.id)))
-                    }
-                    .modifier(DragOut(url: url(e)))
                 }
             }.padding(12)
         }
