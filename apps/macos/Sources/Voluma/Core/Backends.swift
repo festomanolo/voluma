@@ -64,8 +64,25 @@ struct NativeBackend: FSBackend {
     func exportFile(_ path: String, to dest: URL) throws { try FileManager.default.copyItem(at: url(path), to: dest) }
     func importFile(from host: URL, to path: String) throws { try FileManager.default.copyItem(at: host, to: url(path)) }   // never overwrites
     func mkdir(_ path: String) throws { try FileManager.default.createDirectory(at: url(path), withIntermediateDirectories: false) }
+    func createFile(_ path: String, contents: Data) throws {
+        let fd = open(url(path).path, O_WRONLY | O_CREAT | O_EXCL, 0o644)   // O_EXCL: never replaces an existing file
+        guard fd >= 0 else { throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))]) }
+        defer { close(fd) }
+        try contents.withUnsafeBytes { p in
+            var off = 0
+            while off < p.count { let n = write(fd, p.baseAddress! + off, p.count - off); if n <= 0 { throw CocoaError(.fileWriteUnknown) }; off += n }
+        }
+    }
     func delete(_ path: String) throws { try FileManager.default.trashItem(at: url(path), resultingItemURL: nil) }   // Trash, never a hard delete
     func rename(_ a: String, _ b: String) throws { try FileManager.default.moveItem(at: url(a), to: url(b)) }
+}
+
+/// Engine-backed volumes have no "create" primitive: write the bytes to a temp file and import it.
+func createViaImport(_ b: FSBackend, _ path: String, _ contents: Data) throws {
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("voluma-new-\(UUID().uuidString)")
+    try contents.write(to: tmp)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    try b.importFile(from: tmp, to: path)
 }
 
 func joinPath(_ a: String, _ b: String) -> String { a == "/" ? "/\(b)" : "\(a)/\(b)" }
