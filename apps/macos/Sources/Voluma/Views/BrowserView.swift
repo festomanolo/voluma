@@ -483,7 +483,12 @@ struct BrowserView: View {
         go(parent.isEmpty ? "/" : parent)
     }
 
-    func load() {
+    func open(_ e: Listing.Entry) {
+        if isNative, let u = url(e), (e.isDir && u.pathExtension.lowercased() == "app") || !e.isDir { NSWorkspace.shared.open(u); return }
+        if e.isDir { go(joinPath(path, e.name)) } else { export(e) }
+    }
+
+    func load(select: [String] = []) {
         let (b, p) = (backend, path)
         Task.detached {
             let r = Result { try b.list(p) }
@@ -492,12 +497,23 @@ struct BrowserView: View {
                 case .success(let l): listing = l; error = nil
                 case .failure(let e): listing = nil; error = e.localizedDescription
                 }
+                recompute()
+                if !select.isEmpty { selection = Set(select.filter { n in rows.contains { $0.id == n } }) }
             }
         }
     }
 
-    /// Runs a blocking mutation off the main thread, then refreshes.
-    func run(_ ok: String, _ work: @escaping () throws -> Void) {
+    private func recompute() {
+        var e = listing?.entries ?? []
+        if !showHidden { e = e.filter { !$0.hidden } }
+        if !filter.isEmpty { e = e.filter { $0.name.localizedCaseInsensitiveContains(filter) } }
+        e.sort(using: sortOrder)
+        rows = e.filter(\.isDir) + e.filter { !$0.isDir }
+        selection = selection.filter { id in rows.contains { $0.id == id } }
+    }
+
+    /// Runs a blocking mutation off the main thread, then refreshes (and selects the named items).
+    func run(_ ok: String, select: [String] = [], _ work: @escaping () throws -> Void) {
         busy = true
         Task.detached {
             let r = Result { try work() }
