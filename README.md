@@ -56,6 +56,8 @@ Intel Core i5-10310U, macOS 26.7.1. Drive tests use disk images, a 256 MB file, 
 
 Transfer engine, measured on the same Mac (internal SATA SSD, source and destination on the same physical disk, so large files are disk-bound):
 
+| | VOLUMA | Reference |
+|---|---|---|
 The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
 
 ## How it is built
