@@ -125,14 +125,16 @@ struct BrowserView: View {
         } message: { Text(isNative ? "Items go to the Trash and can be restored." : "This permanently removes it from the image. There is no Trash.") }
         .alert("New Folder", isPresented: $showNewFolder) {
             TextField("Name", text: $newFolderName)
-            Button("Create") { run("Created \(newFolderName)") { try backend.mkdir(joinPath(path, newFolderName)) } }
+            Button("Create") { createFolder(newFolderName) }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $renameText)
-            Button("Rename") { if let e = renaming { let n = renameText; run("Renamed to \(n)") { try backend.rename(joinPath(path, e.name), joinPath(path, n)) } }; renaming = nil }
+            Button("Rename") { if let e = renaming { let n = renameText; run("Renamed to \(n)", select: [n]) { try backend.rename(joinPath(path, e.name), joinPath(path, n)) } }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
+        .sheet(isPresented: $showNewFile) { newFileSheet }
+        .sheet(item: $infoEntry) { e in InfoSheet(entry: e, url: url(e), size: e.size) }
     }
 
     private var ntfsBanner: some View {
