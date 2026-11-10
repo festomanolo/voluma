@@ -465,6 +465,7 @@ struct BrowserView: View {
     }
 
     // MARK: navigation
+
     private func publishNav() {
         nav.innerCanBack = !backStack.isEmpty
         nav.innerBack = { goBack() }
@@ -472,10 +473,15 @@ struct BrowserView: View {
     func go(_ p: String) {
         guard p != path else { return }
         backStack.append(path); forwardStack = []
-        path = p; selection = []; load()
+        path = p; selection = []; filter = ""; load()
     }
     func goBack() { guard let p = backStack.popLast() else { return }; forwardStack.append(path); path = p; selection = []; load() }
     func goForward() { guard let p = forwardStack.popLast() else { return }; backStack.append(path); path = p; selection = []; load() }
+    func goUp() {
+        guard path != "/" else { return }
+        let parent = (path as NSString).deletingLastPathComponent
+        go(parent.isEmpty ? "/" : parent)
+    }
 
     func load() {
         let (b, p) = (backend, path)
