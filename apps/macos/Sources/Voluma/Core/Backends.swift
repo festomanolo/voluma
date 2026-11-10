@@ -13,6 +13,8 @@ protocol FSBackend {
     func exportFile(_ path: String, to dest: URL) throws
     func importFile(from host: URL, to path: String) throws
     func mkdir(_ path: String) throws
+    /// Creates a new file holding `contents` (empty by default). Never overwrites.
+    func createFile(_ path: String, contents: Data) throws
     func delete(_ path: String) throws
     func rename(_ a: String, _ b: String) throws
 }
@@ -26,6 +28,7 @@ struct EngineBackend: FSBackend {
     func exportFile(_ path: String, to dest: URL) throws { _ = try Engine.exportFile(image: image, part: part, path: path, dest: dest.path) }
     func importFile(from host: URL, to path: String) throws { try Engine.mutate(image: image, part: part, op: "import", a: path, b: host.path) }
     func mkdir(_ path: String) throws { try Engine.mutate(image: image, part: part, op: "mkdir", a: path) }
+    func createFile(_ path: String, contents: Data) throws { try createViaImport(self, path, contents) }
     func delete(_ path: String) throws { try Engine.mutate(image: image, part: part, op: "delete", a: path) }
     func rename(_ a: String, _ b: String) throws { try Engine.mutate(image: image, part: part, op: "rename", a: a, b: b) }
 }
@@ -37,15 +40,22 @@ struct NativeBackend: FSBackend {
     private func url(_ p: String) -> URL { p == "/" ? URL(fileURLWithPath: root) : URL(fileURLWithPath: root).appendingPathComponent(String(p.dropFirst())) }
 
     func list(_ p: String) throws -> Listing {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey, .contentModificationDateKey, .isHiddenKey, .isPackageKey]
-        let items = try FileManager.default.contentsOfDirectory(at: url(p), includingPropertiesForKeys: keys, options: [])
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isHiddenKey,
+                                      .isSymbolicLinkKey, .tagNamesKey, .labelNumberKey]
+        let dir = url(p)
+        let items = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [])
         let entries: [Listing.Entry] = items.map { u in
             let v = try? u.resourceValues(forKeys: Set(keys))
-            let dir = v?.isDirectory == true
-            return Listing.Entry(name: u.lastPathComponent, kind: dir ? "directory" : "file",
-                                 size: dir ? 0 : UInt64(max(0, v?.fileSize ?? 0)),
+            var isDir = v?.isDirectory == true
+            if v?.isSymbolicLink == true { var d: ObjCBool = false; isDir = FileManager.default.fileExists(atPath: u.path, isDirectory: &d) && d.boolValue }   // a link to a folder opens like a folder
+            let tags = v?.tagNames ?? []
+            return Listing.Entry(name: u.lastPathComponent, kind: isDir ? "directory" : "file",
+                                 size: isDir ? 0 : UInt64(max(0, v?.fileSize ?? 0)),
                                  modified: v?.contentModificationDate.map { Int64($0.timeIntervalSince1970) },
-                                 hidden: v?.isHidden == true || u.lastPathComponent.hasPrefix("."))
+                                 hidden: v?.isHidden == true || u.lastPathComponent.hasPrefix("."),
+                                 created: v?.creationDate.map { Int64($0.timeIntervalSince1970) },
+                                 tags: tags.isEmpty ? nil : tags,
+                                 label: (v?.labelNumber ?? 0) > 0 ? v?.labelNumber : nil)
         }
         return Listing(filesystem: "Mounted volume", label: nil, entries: entries,
                        capabilities: .init(read: true, write: true), driver_supports_write: true, write_blocked: nil)
@@ -54,8 +64,25 @@ struct NativeBackend: FSBackend {
     func exportFile(_ path: String, to dest: URL) throws { try FileManager.default.copyItem(at: url(path), to: dest) }
     func importFile(from host: URL, to path: String) throws { try FileManager.default.copyItem(at: host, to: url(path)) }   // never overwrites
     func mkdir(_ path: String) throws { try FileManager.default.createDirectory(at: url(path), withIntermediateDirectories: false) }
+    func createFile(_ path: String, contents: Data) throws {
+        let fd = open(url(path).path, O_WRONLY | O_CREAT | O_EXCL, 0o644)   // O_EXCL: never replaces an existing file
+        guard fd >= 0 else { throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))]) }
+        defer { close(fd) }
+        try contents.withUnsafeBytes { p in
+            var off = 0
+            while off < p.count { let n = write(fd, p.baseAddress! + off, p.count - off); if n <= 0 { throw CocoaError(.fileWriteUnknown) }; off += n }
+        }
+    }
     func delete(_ path: String) throws { try FileManager.default.trashItem(at: url(path), resultingItemURL: nil) }   // Trash, never a hard delete
     func rename(_ a: String, _ b: String) throws { try FileManager.default.moveItem(at: url(a), to: url(b)) }
+}
+
+/// Engine-backed volumes have no "create" primitive: write the bytes to a temp file and import it.
+func createViaImport(_ b: FSBackend, _ path: String, _ contents: Data) throws {
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("voluma-new-\(UUID().uuidString)")
+    try contents.write(to: tmp)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    try b.importFile(from: tmp, to: path)
 }
 
 func joinPath(_ a: String, _ b: String) -> String { a == "/" ? "/\(b)" : "\(a)/\(b)" }
@@ -64,17 +91,7 @@ func joinPath(_ a: String, _ b: String) -> String { a == "/" ? "/\(b)" : "\(a)/\
 enum Copier {
     struct CopyError: LocalizedError { let message: String; var errorDescription: String? { message } }
 
-    static func uniqueName(_ name: String, taken: Set<String>) -> String {
-        if !taken.contains(name.lowercased()) { return name }
-        let ns = name as NSString
-        let (base, ext) = (ns.deletingPathExtension, ns.pathExtension)
-        var n = 1
-        while true {
-            let cand = (n == 1 ? "\(base) copy" : "\(base) copy \(n)") + (ext.isEmpty ? "" : ".\(ext)")
-            if !taken.contains(cand.lowercased()) { return cand }
-            n += 1
-        }
-    }
+    static func uniqueName(_ name: String, taken: Set<String>) -> String { NameClash.unique(name, taken: taken) }
 
     static func takenNames(_ b: FSBackend, _ dir: String) -> Set<String> {
         Set(((try? b.list(dir))?.entries ?? []).map { $0.name.lowercased() })
@@ -137,11 +154,18 @@ final class Clip: @unchecked Sendable {
     var backend: FSBackend?
     var items: [(path: String, entry: Listing.Entry)] = []
     var promises: [PromiseDelegate] = []   // keep file-promise delegates alive while on the pasteboard
+    /// Cut (⌘X): the next paste moves the items instead of copying them. Nothing is removed until the paste lands.
+    private(set) var isCut = false
+
+    func isCutItem(backendID: String, path: String) -> Bool {
+        isCut && backend?.id == backendID && items.contains { $0.path == path }
+    }
+    func clearCut() { isCut = false }
 
     /// Puts the selection on the system pasteboard (file URLs for native volumes, lazy file promises for
     /// images, so Finder can paste both) and remembers it for in-app paste.
-    func copy(backend: FSBackend, items: [(path: String, entry: Listing.Entry)]) {
-        self.backend = backend; self.items = items; token = UUID().uuidString; promises = []
+    func copy(backend: FSBackend, items: [(path: String, entry: Listing.Entry)], cut: Bool = false) {
+        self.backend = backend; self.items = items; token = UUID().uuidString; promises = []; isCut = cut
         let pb = NSPasteboard.general
         pb.clearContents()
         if backend.isNative {
