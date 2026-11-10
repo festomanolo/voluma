@@ -27,3 +27,9 @@ echo "2. name clash never overwrites"
 "$FT" copy "$W/src/tree" "$W/dst" >/dev/null; [ -d "$W/dst/tree copy 2" ] || fail clash2
 
 echo "3. copying a folder into itself is refused"
+if "$FT" copy "$W/dst/tree" "$W/dst/tree" >/dev/null; then fail into-itself; fi
+
+echo "4. same-volume move is a rename"
+mkdir "$W/mv"; "$FT" move "$W/dst/tree copy 2" "$W/mv" | grep -q "renamed 1" || fail rename
+[ ! -e "$W/dst/tree copy 2" ] && [ -d "$W/mv/tree copy 2" ] || fail moved
+
