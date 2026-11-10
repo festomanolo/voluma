@@ -412,7 +412,7 @@ struct BrowserView: View {
             Text(g.title).font(.subheadline.weight(.semibold))
             Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.tertiary)
             Spacer()
-        }.padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.horizontal, 10).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The list with Finder-style segments (a Table cannot have section headers, so this is a List with a sortable header row).
