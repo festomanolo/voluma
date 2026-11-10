@@ -70,7 +70,11 @@ struct ContentView: View {
                     }
                 })) {
                 SwiftUI.Section("Favorites") {
-                Label(s.rawValue, systemImage: s.icon).tag(s)
+                    ForEach(Favorite.all) { f in Label(f.title, systemImage: f.icon).tag(SidebarItem.place(f.id)) }
+                }
+                SwiftUI.Section("VOLUMA") {
+                    ForEach(Section.allCases) { s in Label(s.rawValue, systemImage: s.icon).tag(SidebarItem.section(s)) }
+                }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
