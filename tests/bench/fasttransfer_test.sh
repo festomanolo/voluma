@@ -9,3 +9,9 @@ FT="$OUT"; fail() { echo "FAIL: $*"; exit 1; }
 
 # a source tree: many small files, a big file (chunked path), a symlink, an xattr, odd permissions and mtime
 mkdir -p "$W/src/tree/a/b" "$W/dst"
+i=0; while [ $i -lt 300 ]; do head -c $((i * 37 + 1)) /dev/urandom > "$W/src/tree/a/f$i.dat"; i=$((i + 1)); done
+head -c 40000000 /dev/urandom > "$W/src/tree/a/b/big.bin"; : > "$W/src/tree/empty"
+ln -s a/b/big.bin "$W/src/tree/link"; xattr -w com.test.x hello "$W/src/tree/empty"
+touch -t 202001010101 "$W/src/tree/a/b/big.bin"; chmod 640 "$W/src/tree/a/b/big.bin"
+
+echo "1. same-volume copy (clone) keeps content, links, xattrs, mtime, mode"
