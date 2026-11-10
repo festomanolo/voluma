@@ -335,3 +335,13 @@ struct InspectorPane: View {
         }
     }
 }
+
+enum Thumbnails {
+    /// A Quick Look thumbnail (image preview, PDF page, video frame …); nil when the system has none.
+    static func make(_ url: URL, side: CGFloat) async -> NSImage? {
+        let req = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: side, height: side), scale: 2, representationTypes: .thumbnail)
+        return await withCheckedContinuation { cont in
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in cont.resume(returning: rep?.nsImage) }
+        }
+    }
+}
