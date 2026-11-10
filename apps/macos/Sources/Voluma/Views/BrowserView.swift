@@ -525,6 +525,7 @@ struct BrowserView: View {
             Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite || filterFocused)
             Button("") { paste(forceMove: true) }.keyboardShortcut("v", modifiers: [.command, .option]).disabled(!canWrite || busy)
             Button("") { copyPath() }.keyboardShortcut("c", modifiers: [.command, .option]).disabled(selection.isEmpty)
+            Button("") { showInspector.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
             Button("") { showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
             Button("") { goUp() }.keyboardShortcut(.upArrow, modifiers: .command).disabled(path == "/")
             Button("") { if let e = selected.first { open(e) } }.keyboardShortcut(.downArrow, modifiers: .command).disabled(selection.isEmpty)
@@ -615,7 +616,13 @@ struct BrowserView: View {
         if !showHidden { e = e.filter { !$0.hidden } }
         if !filter.isEmpty { e = e.filter { $0.name.localizedCaseInsensitiveContains(filter) } }
         e.sort(using: sortOrder)
-        rows = e.filter(\.isDir) + e.filter { !$0.isDir }
+        if group == .none {
+            rows = e.filter(\.isDir) + e.filter { !$0.isDir }
+            groups = [EntryGroup(id: "", title: "", entries: rows)]
+        } else {
+            groups = Grouper.group(e, by: group, reverse: !ascending && sortKey == group.sortKey)
+            rows = groups.flatMap(\.entries)
+        }
         selection = selection.filter { id in rows.contains { $0.id == id } }
     }
 
