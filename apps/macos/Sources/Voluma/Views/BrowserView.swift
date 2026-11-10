@@ -335,9 +335,133 @@ struct BrowserView: View {
                 }
             }.padding(12)
         }
-        // ⌘C / ⌘V reach these through the responder chain, so text fields in the alerts keep working.
+        .contentShape(Rectangle())
+        .onTapGesture { selection = [] }
+        .contextMenu { if canWrite { backgroundMenu } }
         .onCopyCommand { copySelection(); return [] }
+        .onCutCommand { cutSelection(); return [] }
         .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
+        .onKeyPress(.space) { quickLook(); return .handled }
+    }
+
+    private func clickSelect(_ e: Listing.Entry) {
+        let f = NSEvent.modifierFlags
+        if f.contains(.command) { if selection.contains(e.id) { selection.remove(e.id) } else { selection.insert(e.id) }; anchor = e.id }
+        else if f.contains(.shift), let a = anchor, let i = rows.firstIndex(where: { $0.id == a }), let j = rows.firstIndex(where: { $0.id == e.id }) {
+            selection = Set(rows[min(i, j)...max(i, j)].map(\.id))
+        } else { selection = [e.id]; anchor = e.id }
+    }
+
+    // MARK: menus
+
+    @ViewBuilder private func itemMenu(_ es: [Listing.Entry], ids: Set<Listing.Entry.ID>) -> some View {
+        let one = es.count == 1 ? es.first : nil
+        if let e = one { Button("Open") { open(e) } }
+        if let e = one, isNative, !e.isDir, let u = url(e) {
+            let apps = NSWorkspace.shared.urlsForApplications(toOpen: u).prefix(12)
+            if !apps.isEmpty {
+                Menu("Open With") {
+                    ForEach(Array(apps), id: \.self) { app in
+                        Button(FileManager.default.displayName(atPath: app.path)) {
+                            NSWorkspace.shared.open([u], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+                        }
+                    }
+                }
+            }
+        }
+        Button("Quick Look") { selection = ids; quickLook() }
+        if one != nil { Button("Get Info") { selection = ids; showInfo() } }
+        Divider()
+        Button("Copy") { selection = ids; copySelection() }
+        if canWrite && canMoveFromHere { Button("Cut") { selection = ids; cutSelection() } }
+        if canWrite { Button("Paste") { paste() } }
+        if canWrite { Button("Duplicate") { selection = ids; duplicate() } }
+        Button("Copy Path") { selection = ids; copyPath() }
+        if let e = one {
+            if canWrite { Button("Rename…") { renameText = e.name; renaming = e } }
+            if isNative { Button("Reveal in Finder") { if let u = url(e) { NSWorkspace.shared.activateFileViewerSelecting([u]) } } }
+            else if !e.isDir { Button("Export…") { export(e) } }
+        }
+        if isNative && canWrite {
+            Button("Make Alias") { selection = ids; makeAlias() }
+            Button("Compress") { selection = ids; compress() }
+            Divider()
+            // Finder tag colours (real tags: they show up in Finder too)
+            ForEach(FinderTag.allCases) { t in
+                Button { selection = ids; applyTag(t) } label: { Label(t.rawValue, systemImage: "circle.fill") }.tint(t.color)
+            }
+            Button("Remove Tags") { selection = ids; clearTags() }
+        }
+        if canWrite {
+            Divider()
+            Button("New Folder") { newFolderName = ""; showNewFolder = true }
+            Menu("New File") { ForEach(FileTemplate.all) { t in Button(t.title) { openNewFile(t) } } }
+            Divider()
+            Button(isNative ? "Move to Trash…" : "Delete…", role: .destructive) { confirmDelete = es }
+        }
+    }
+
+    @ViewBuilder private var backgroundMenu: some View {
+        Button("Paste") { paste() }
+        Button("New Folder") { newFolderName = ""; showNewFolder = true }
+        Menu("New File") { ForEach(FileTemplate.all) { t in Button(t.title) { openNewFile(t) } } }
+        Button("Select All") { selection = Set(rows.map(\.id)) }
+    }
+
+    /// Keyboard shortcuts that are not reachable through the responder chain. Disabled while the filter field has focus.
+    private var shortcuts: some View {
+        Group {
+            Button("") { newFolderName = ""; showNewFolder = true }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!canWrite)
+            Button("") { openNewFile(FileTemplate.all[1]) }.keyboardShortcut("n", modifiers: [.command, .option]).disabled(!canWrite)
+            Button("") { duplicate() }.keyboardShortcut("d", modifiers: .command).disabled(selection.isEmpty || !canWrite)
+            Button("") { showInfo() }.keyboardShortcut("i", modifiers: .command).disabled(selection.count != 1)
+            Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite || filterFocused)
+            Button("") { paste(forceMove: true) }.keyboardShortcut("v", modifiers: [.command, .option]).disabled(!canWrite || busy)
+            Button("") { copyPath() }.keyboardShortcut("c", modifiers: [.command, .option]).disabled(selection.isEmpty)
+            Button("") { showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
+            Button("") { goUp() }.keyboardShortcut(.upArrow, modifiers: .command).disabled(path == "/")
+            Button("") { if let e = selected.first { open(e) } }.keyboardShortcut(.downArrow, modifiers: .command).disabled(selection.isEmpty)
+            Button("") { viewMode = ViewMode.list.rawValue }.keyboardShortcut("1", modifiers: .command)
+            Button("") { viewMode = ViewMode.icons.rawValue }.keyboardShortcut("2", modifiers: .command)
+            Button("") { filterFocused = true }.keyboardShortcut("f", modifiers: .command)
+            Button("") { makeAlias() }.keyboardShortcut("a", modifiers: [.command, .control]).disabled(selection.isEmpty || !canWrite || !isNative)
+            Button("") { goBack() }.keyboardShortcut("[", modifiers: .command).disabled(backStack.isEmpty)
+            Button("") { goForward() }.keyboardShortcut("]", modifiers: .command).disabled(forwardStack.isEmpty)
+            if mode == .icons { Button("") { selection = Set(rows.map(\.id)) }.keyboardShortcut("a", modifiers: .command).disabled(filterFocused) }
+        }
+        .frame(width: 0, height: 0).opacity(0).allowsHitTesting(false)
+    }
+
+    // MARK: footer / progress
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if let t = transfer {
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in transferBar(t) }
+            } else {
+                if busy { ProgressView().controlSize(.small) }
+                Text(status ?? "\(rows.count) item\(rows.count == 1 ? "" : "s")" + (selection.isEmpty ? "" : " · \(selection.count) selected"))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+        }.padding(.horizontal, 14).padding(.vertical, 5).frame(minHeight: 26)
+    }
+
+    private func transferBar(_ t: TransferProgress) -> some View {
+        let s = t.snapshot
+        let el = max(Date().timeIntervalSince(t.started), 0.001)
+        let frac = s.bytesTotal > 0 ? Double(s.bytesDone) / Double(s.bytesTotal) : (s.filesTotal > 0 ? Double(s.filesDone) / Double(s.filesTotal) : 0)
+        let rate = Double(s.bytesDone) / el
+        let left = rate > 1 && s.bytesTotal > s.bytesDone ? Double(s.bytesTotal - s.bytesDone) / rate : 0
+        return HStack(spacing: 10) {
+            ProgressView(value: min(max(frac, 0), 1)).frame(width: 180)
+            Text("\(formatBytes(s.bytesDone)) of \(formatBytes(s.bytesTotal))\(s.scanning ? "+" : "")")
+            if rate > 1 { Text("\(formatBytes(Int64(rate)))/s").monospacedDigit() }
+            if left >= 1 { Text("\(Int(left.rounded(.up))) s left") }
+            Text("\(s.filesDone.formatted()) of \(s.filesTotal.formatted()) files")
+            if s.errors > 0 { Text("\(s.errors) failed").foregroundStyle(.red) }
+            Button("Cancel") { t.cancel() }.controlSize(.small)
+        }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
     }
 
     // MARK: navigation
