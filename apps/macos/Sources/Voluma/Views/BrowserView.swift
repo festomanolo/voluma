@@ -205,23 +205,12 @@ struct BrowserView: View {
 
     // MARK: toolbar
 
-    private var toolbarRow: some View {
-        HStack(spacing: 6) {
-            Button { goBack() } label: { Image(systemName: "chevron.left") }.disabled(backStack.isEmpty).help("Previous folder (⌘[)")
-            Button { goForward() } label: { Image(systemName: "chevron.right") }.disabled(forwardStack.isEmpty).help("Next folder (⌘])")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    Button(rootTitle) { go("/") }.buttonStyle(.link)
-                    ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                        Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
-                    }
-                }
-            }
-            Spacer(minLength: 8)
-            if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
-
-            sortGroupMenu
+    @ToolbarContentBuilder private var windowToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button { goForward() } label: { Label("Forward", systemImage: "chevron.right") }
+                .disabled(forwardStack.isEmpty).help("Next folder (⌘])")
+        }
+        ToolbarItem {
             Picker("View", selection: $viewMode) {
                 Image(systemName: "list.bullet").tag(ViewMode.list.rawValue)
                 Image(systemName: "square.grid.2x2").tag(ViewMode.icons.rawValue)
