@@ -306,8 +306,8 @@ struct BrowserView: View {
             Divider()
             Toggle("Show Hidden Files", isOn: $showHidden)
             Button("Select All", systemImage: "checkmark.circle") { selection = Set(rows.map(\.id)) }
-        } label: { Image(systemName: "ellipsis.circle") }
-        .menuIndicator(.hidden).frame(width: 30).help("More actions")
+        } label: { Label("Actions", systemImage: "ellipsis.circle") }
+        .help("Copy, Cut, Paste and more")
     }
 
     // MARK: content
