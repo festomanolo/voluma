@@ -55,6 +55,7 @@ Intel Core i5-10310U, macOS 26.7.1. Drive tests use disk images, a 256 MB file, 
 | exFAT small files (2,000) | 175 files/s | macOS: 597 files/s |
 
 Transfer engine, measured on the same Mac (internal SATA SSD, source and destination on the same physical disk, so large files are disk-bound):
+
 The last row is where VOLUMA loses: macOS creates many small files on exFAT faster. Reproduce everything with `tests/bench/run.sh` and `tests/bench/scan.sh`.
 
 ## How it is built
