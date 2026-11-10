@@ -32,9 +32,12 @@ struct BrowserView: View {
     @State private var forwardStack: [String] = []
     @State private var listing: Listing?
     @State private var rows: [Listing.Entry] = []
+    @State private var groups: [EntryGroup] = []
+    @AppStorage("voluma.groupBy") private var groupBy = GroupKey.none.rawValue
+    @AppStorage("voluma.inspector") private var showInspector = false
     @State private var error: String?
     @State private var selection: Set<Listing.Entry.ID> = []
-    @State private var sortOrder = [KeyPathComparator(\Listing.Entry.name)]
+    @State private var sortOrder = SortKey.name.comparators(ascending: true)
     @State private var status: String?
     @State private var busy = false
     @State private var transfer: TransferProgress?
@@ -82,6 +85,9 @@ struct BrowserView: View {
     private var crumbs: [String] { path.split(separator: "/").map(String.init) }
     private var driverWritable: Bool { listing?.driver_supports_write ?? false }
     private var selected: [Listing.Entry] { rows.filter { selection.contains($0.id) } }
+    private var group: GroupKey { GroupKey(rawValue: groupBy) ?? .none }
+    private var sortKey: SortKey? { SortKey.of(sortOrder) }
+    private var ascending: Bool { sortOrder.first?.order != .reverse }
     private var mode: ViewMode { ViewMode(rawValue: viewMode) ?? .list }
     private var rootTitle: String { target.nativeRoot == "/" && target.startPath != "/" ? "Macintosh HD" : target.title }
 
@@ -113,6 +119,12 @@ struct BrowserView: View {
         .onChange(of: sortOrder) { _, _ in recompute() }
         .onChange(of: filter) { _, _ in recompute() }
         .onChange(of: showHidden) { _, _ in recompute() }
+        .onChange(of: groupBy) { _, _ in recompute() }
+        .inspector(isPresented: $showInspector) {
+            InspectorPane(selection: selected, url: { url($0) }, folderName: crumbs.last ?? rootTitle, folderPath: path,
+                          itemCount: rows.count, filesystem: listing?.filesystem ?? "—")
+                .inspectorColumnWidth(min: 240, ideal: 290, max: 420)
+        }
         .confirmationDialog("Allow changes to this image?", isPresented: $confirmUnlock, titleVisibility: .visible) {
             Button("Allow Changes", role: .destructive) { writeUnlocked = true }
             Button("Keep Read-only", role: .cancel) {}
@@ -209,6 +221,7 @@ struct BrowserView: View {
             Spacer(minLength: 8)
             if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
 
+            sortGroupMenu
             Picker("View", selection: $viewMode) {
                 Image(systemName: "list.bullet").tag(ViewMode.list.rawValue)
                 Image(systemName: "square.grid.2x2").tag(ViewMode.icons.rawValue)
@@ -226,6 +239,8 @@ struct BrowserView: View {
                 Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
             moreMenu
+            Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                .help("Show or hide the details panel (⌥⌘I)")
             TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 130).focused($filterFocused)
                 .onSubmit { filterFocused = false }
             if !isNative && !isHelper {
@@ -238,7 +253,28 @@ struct BrowserView: View {
                 .disabled((!driverWritable || listing?.write_blocked != nil) && !writeUnlocked)
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
             }
-        }.padding(.horizontal, 14).padding(.vertical, 8)
+        }.labelStyle(.iconOnly).padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private var sortGroupMenu: some View {
+        Menu {
+            SwiftUI.Section("Sort By") {
+                ForEach(SortKey.allCases) { k in
+                    Button { sortOrder = k.comparators(ascending: sortKey == k ? ascending : true) } label: {
+                        if sortKey == k { Label(k.rawValue, systemImage: "checkmark") } else { Text(k.rawValue) }
+                    }
+                }
+                Divider()
+                Button { sortOrder = (sortKey ?? .name).comparators(ascending: true) } label: { if ascending { Label("Ascending", systemImage: "checkmark") } else { Text("Ascending") } }
+                Button { sortOrder = (sortKey ?? .name).comparators(ascending: false) } label: { if !ascending { Label("Descending", systemImage: "checkmark") } else { Text("Descending") } }
+            }
+            SwiftUI.Section("Group By") {
+                ForEach(GroupKey.allCases) { g in
+                    Button { groupBy = g.rawValue } label: { if group == g { Label(g.rawValue, systemImage: "checkmark") } else { Text(g.rawValue) } }
+                }
+            }
+        } label: { Label("Sort and Group", systemImage: "arrow.up.arrow.down.circle") }
+        .menuIndicator(.hidden).frame(width: 30).help("Sort By and Group By")
     }
 
     private var moreMenu: some View {
@@ -268,6 +304,8 @@ struct BrowserView: View {
                 .contextMenu { if canWrite { backgroundMenu } }
         } else if mode == .icons {
             grid
+        } else if group != .none {
+            groupedList
         } else {
             table
         }
@@ -311,27 +349,13 @@ struct BrowserView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 124), spacing: 8, alignment: .top)], spacing: 10) {
-                ForEach(rows) { e in
-                    VStack(spacing: 4) {
-                        Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 56, height: 56)
-                        Text(e.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(selection.contains(e.id) ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(selection.contains(e.id) ? Color.white : (e.hidden ? Color.secondary : Color.primary))
-                        TagDots(colors: FinderTag.dots(for: e))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 124), spacing: 8, alignment: .top)], spacing: 10, pinnedViews: [.sectionHeaders]) {
+                ForEach(groups) { g in
+                    SwiftUI.Section {
+                        ForEach(g.entries) { e in gridCell(e) }
+                    } header: {
+                        if group != .none { groupHeader(g).background(.regularMaterial) }
                     }
-                    .padding(6).frame(maxWidth: .infinity)
-                    .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                    .opacity(isCutRow(e) ? 0.4 : 1)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { open(e) }
-                    .onTapGesture { clickSelect(e) }
-                    .contextMenu {
-                        if !selection.contains(e.id) { Color.clear.frame(width: 0, height: 0).onAppear { selection = [e.id] } }
-                        itemMenu(selected.isEmpty ? [e] : selected, ids: Set((selected.isEmpty ? [e] : selected).map(\.id)))
-                    }
-                    .modifier(DragOut(url: url(e)))
                 }
             }.padding(12)
         }
@@ -342,6 +366,89 @@ struct BrowserView: View {
         .onCutCommand { cutSelection(); return [] }
         .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
         .onKeyPress(.space) { quickLook(); return .handled }
+    }
+
+    private func gridCell(_ e: Listing.Entry) -> some View {
+        VStack(spacing: 4) {
+            Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 56, height: 56)
+            Text(e.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(selection.contains(e.id) ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .foregroundStyle(selection.contains(e.id) ? Color.white : (e.hidden ? Color.secondary : Color.primary))
+            TagDots(colors: FinderTag.dots(for: e))
+        }
+        .padding(6).frame(maxWidth: .infinity)
+        .background(selection.contains(e.id) ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .opacity(isCutRow(e) ? 0.4 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { open(e) }
+        .onTapGesture { clickSelect(e) }
+        .contextMenu {
+            if !selection.contains(e.id) { Color.clear.frame(width: 0, height: 0).onAppear { selection = [e.id] } }
+            itemMenu(selected.isEmpty ? [e] : selected, ids: Set((selected.isEmpty ? [e] : selected).map(\.id)))
+        }
+        .modifier(DragOut(url: url(e)))
+    }
+
+    private func groupHeader(_ g: EntryGroup) -> some View {
+        HStack(spacing: 6) {
+            Text(g.title).font(.headline)
+            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+        }.padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The list with Finder-style segments (a Table cannot have section headers, so this is a List with a sortable header row).
+    private var groupedList: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                headerCell("Name", .name).frame(maxWidth: .infinity, alignment: .leading)
+                headerCell("Date Modified", .modified).frame(width: 150, alignment: .leading)
+                headerCell("Size", .size).frame(width: 80, alignment: .leading)
+                headerCell("Kind", .kind).frame(width: 130, alignment: .leading)
+            }.padding(.horizontal, 26).padding(.vertical, 4).background(.bar)
+            Divider()
+            List(selection: $selection) {
+                ForEach(groups) { g in
+                    SwiftUI.Section {
+                        ForEach(g.entries) { e in
+                            HStack(spacing: 0) {
+                                HStack(spacing: 7) {
+                                    Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 18, height: 18)
+                                    Text(e.name).lineLimit(1).foregroundStyle(e.hidden ? .secondary : .primary)
+                                    TagDots(colors: FinderTag.dots(for: e))
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
+                                    .frame(width: 150, alignment: .leading)
+                                Text(e.isDir ? "—" : formatBytes(Int64(e.size))).frame(width: 80, alignment: .leading)
+                                Text(e.kindText).lineLimit(1).frame(width: 130, alignment: .leading)
+                            }
+                            .foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
+                            .tag(e.id).modifier(DragOut(url: url(e)))
+                        }
+                    } header: { groupHeader(g) }
+                }
+            }
+            .contextMenu(forSelectionType: Listing.Entry.ID.self) { ids in
+                let es = rows.filter { ids.contains($0.id) }
+                if !es.isEmpty { itemMenu(es, ids: ids) } else if canWrite { backgroundMenu }
+            } primaryAction: { ids in
+                if let e = rows.first(where: { ids.contains($0.id) }) { open(e) }
+            }
+            .onCopyCommand { copySelection(); return [] }
+            .onCutCommand { cutSelection(); return [] }
+            .onPasteCommand(of: [.fileURL, UTType(Clip.type.rawValue) ?? .data]) { _ in paste() }
+            .onKeyPress(.space) { quickLook(); return .handled }
+        }
+    }
+
+    private func headerCell(_ title: String, _ k: SortKey) -> some View {
+        Button { sortOrder = k.comparators(ascending: sortKey == k ? !ascending : true) } label: {
+            HStack(spacing: 3) {
+                Text(title).font(.caption.weight(.medium))
+                if sortKey == k { Image(systemName: ascending ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold)) }
+            }
+        }.buttonStyle(.plain).foregroundStyle(.secondary)
     }
 
     private func clickSelect(_ e: Listing.Entry) {
@@ -418,6 +525,7 @@ struct BrowserView: View {
             Button("") { if !selected.isEmpty { confirmDelete = selected } }.keyboardShortcut(.delete, modifiers: .command).disabled(selection.isEmpty || !canWrite || filterFocused)
             Button("") { paste(forceMove: true) }.keyboardShortcut("v", modifiers: [.command, .option]).disabled(!canWrite || busy)
             Button("") { copyPath() }.keyboardShortcut("c", modifiers: [.command, .option]).disabled(selection.isEmpty)
+            Button("") { showInspector.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
             Button("") { showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
             Button("") { goUp() }.keyboardShortcut(.upArrow, modifiers: .command).disabled(path == "/")
             Button("") { if let e = selected.first { open(e) } }.keyboardShortcut(.downArrow, modifiers: .command).disabled(selection.isEmpty)
@@ -508,7 +616,13 @@ struct BrowserView: View {
         if !showHidden { e = e.filter { !$0.hidden } }
         if !filter.isEmpty { e = e.filter { $0.name.localizedCaseInsensitiveContains(filter) } }
         e.sort(using: sortOrder)
-        rows = e.filter(\.isDir) + e.filter { !$0.isDir }
+        if group == .none {
+            rows = e.filter(\.isDir) + e.filter { !$0.isDir }
+            groups = [EntryGroup(id: "", title: "", entries: rows)]
+        } else {
+            groups = Grouper.group(e, by: group, reverse: !ascending && sortKey == group.sortKey)
+            rows = groups.flatMap(\.entries)
+        }
         selection = selection.filter { id in rows.contains { $0.id == id } }
     }
 

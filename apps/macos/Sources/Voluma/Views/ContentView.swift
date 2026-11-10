@@ -8,7 +8,7 @@ enum Section: String, CaseIterable, Identifiable {
     }
 }
 
-enum SidebarItem: Hashable { case section(Section), place(String) }
+enum SidebarItem: Hashable { case section(Section), place(String), location(String) }
 
 /// Finder-style shortcuts to the folders you use every day, browsed natively with the full set of Finder actions.
 struct Favorite: Identifiable {
@@ -55,22 +55,75 @@ struct ContentView: View {
     }
     private var canGoBack: Bool { (place.browse != nil && nav.innerCanBack) || !history.isEmpty }
 
+    /// Mounted volumes (and unmounted partitions VOLUMA can read) for the Locations list.
+    private var locations: [DiskNode] {
+        func walk(_ n: DiskNode) -> [DiskNode] { [n] + n.children.flatMap(walk) }
+        let all = monitor.disks.flatMap(walk)
+        var seen = Set<String>()
+        return all.filter { n in
+            guard !n.isWhole || n.children.isEmpty else { return false }
+            let ok: Bool
+            if let m = n.mountPath { ok = m == "/" || m.hasPrefix("/Volumes/") } else { ok = n.rawBrowsable && !n.isDiskImage }
+            return ok && seen.insert(n.bsd).inserted
+        }
+    }
+    private func icon(for n: DiskNode) -> String {
+        if n.isNetwork { return "network" }
+        if !n.isMounted { return "externaldrive.badge.questionmark" }
+        if n.mountPath == "/" { return "internaldrive" }
+        return n.isInternal == false ? "externaldrive" : "internaldrive"
+    }
+    private func canEject(_ n: DiskNode) -> Bool { n.isMounted && n.mountPath != "/" && (n.isDiskImage || n.isInternal == false || n.ejectable || n.removable) }
+    /// "disk5s1" → "disk5": ejecting works on the whole disk.
+    private func wholeDisk(of bsd: String) -> String {
+        guard bsd.hasPrefix("disk") else { return bsd }
+        let digits = bsd.dropFirst(4).prefix { $0.isNumber }
+        return "disk" + digits
+    }
+
+    private func browse(_ node: DiskNode) {
+        guard let m = node.mountPath else {
+            // Unmounted partition: read it raw through the helper (admin prompt unless the device is ours).
+            Task { @MainActor in
+                do {
+                    _ = try await NtfsSessions.shared.start(bsd: node.bsd, title: node.title, mounted: false)
+                    navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, bsd: node.bsd, viaHelper: true, rawOnly: true))
+                } catch { rawError = error.localizedDescription }
+            }
+            return
+        }
+        let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
+        navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m, bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
+    }
+
     var body: some View {
         NavigationSplitView {
             List(selection: Binding<SidebarItem?>(
                 get: {
                     if let b = place.browse, b.nativeRoot == "/", let f = Favorite.all.first(where: { $0.path == b.startPath }) { return .place(f.id) }
+                    if let b = place.browse, let bsd = b.bsd { return .location(bsd) }
                     return .section(place.section)
                 },
                 set: { item in
                     switch item {
                     case .section(let s): navigate(section: s)
                     case .place(let id): if let f = Favorite.all.first(where: { $0.id == id }) { navigate(section: .disks, browse: f.target) }
+                    case .location(let bsd): if let n = locations.first(where: { $0.bsd == bsd }) { browse(n) }
                     case nil: break
                     }
                 })) {
                 SwiftUI.Section("Favorites") {
                     ForEach(Favorite.all) { f in Label(f.title, systemImage: f.icon).tag(SidebarItem.place(f.id)) }
+                }
+                SwiftUI.Section("Locations") {
+                    ForEach(locations) { n in
+                        Label(n.title, systemImage: icon(for: n)).tag(SidebarItem.location(n.bsd))
+                            .contextMenu {
+                                if let m = n.mountPath { Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: m)) } }
+                                if n.isMounted { Button("Storage Lens") { if let m = n.mountPath { lens.start(url: URL(fileURLWithPath: m), title: n.title, volume: n); navigate(section: .lens) } } }
+                                if canEject(n) { Button("Eject") { Ejector.eject(bsd: wholeDisk(of: n.bsd)) { _ in monitor.refresh() } } }
+                            }
+                    }
                 }
                 SwiftUI.Section("VOLUMA") {
                     ForEach(Section.allCases) { s in Label(s.rawValue, systemImage: s.icon).tag(SidebarItem.section(s)) }
@@ -90,21 +143,7 @@ struct ContentView: View {
                                       lens.start(url: URL(fileURLWithPath: m), title: node.title, volume: node)
                                       navigate(section: .lens)
                                   },
-                                  openBrowse: { node in
-                                      guard let m = node.mountPath else {
-                                          // Unmounted partition: read it raw through the helper (admin prompt unless the device is ours).
-                                          Task { @MainActor in
-                                              do {
-                                                  _ = try await NtfsSessions.shared.start(bsd: node.bsd, title: node.title, mounted: false)
-                                                  navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, bsd: node.bsd, viaHelper: true, rawOnly: true))
-                                              } catch { rawError = error.localizedDescription }
-                                          }
-                                          return
-                                      }
-                                      let ro = (try? URL(fileURLWithPath: m).resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
-                                      navigate(browse: BrowseTarget(image: "", part: -1, title: node.title, nativeRoot: m,
-                                                                    bsd: node.bsd, fsKind: node.fsKind, readOnlyMount: ro))
-                                  })
+                                  openBrowse: { node in browse(node) })
                     case .lens: LensView(model: lens, monitor: monitor)
                     case .images: ImageInspectorView(report: report, error: errorText, open: { importing = true },
                                                      browse: { navigate(section: .images, browse: $0) })

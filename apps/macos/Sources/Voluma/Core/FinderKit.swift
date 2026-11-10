@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import QuickLookUI
+import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 // MARK: - kinds
@@ -203,12 +204,48 @@ enum InfoLoader {
     }
 }
 
-struct InfoSheet: View {
-    let entry: Listing.Entry; let url: URL?; let size: UInt64
-    @Environment(\.dismiss) private var dismiss
+/// The details grid for one item (shared by Get Info and the inspector panel).
+struct ItemDetails: View {
+    let entry: Listing.Entry; let url: URL?
     @State private var info = ItemInfo()
     @State private var folderBytes: Int64?
     @State private var computing = false
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 7) {
+            if url == nil {
+                row("Kind", entry.kindText)
+                if !entry.isDir { row("Size", "\(formatBytes(Int64(entry.size))) (\(entry.size.formatted()) bytes)") }
+                row("Modified", entry.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .long, time: .standard) } ?? "—")
+            } else {
+                ForEach(Array(info.rows.enumerated()), id: \.offset) { _, r in row(r.0, r.1) }
+                if entry.isDir { row("Size", folderBytes.map { "\(formatBytes($0)) on disk" } ?? (computing ? "Calculating…" : "—")) }
+            }
+        }
+        .task(id: (url?.path ?? "") + entry.name) {
+            folderBytes = nil
+            guard let url else { return }
+            info = InfoLoader.load(url, entry: entry)
+            if entry.isDir {
+                computing = true
+                let b = await Task.detached(priority: .utility) { InfoLoader.folderSize(url) }.value
+                if !Task.isCancelled { folderBytes = b }
+                computing = false
+            }
+        }
+    }
+
+    private func row(_ k: String, _ v: String) -> some View {
+        GridRow {
+            Text(k).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(v).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        }.font(.callout)
+    }
+}
+
+struct InfoSheet: View {
+    let entry: Listing.Entry; let url: URL?; let size: UInt64
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -216,44 +253,95 @@ struct InfoSheet: View {
                 Image(nsImage: FileIcons.icon(for: entry, url: url)).resizable().frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.name).font(.title3.weight(.semibold)).lineLimit(2).textSelection(.enabled)
-                    HStack(spacing: 6) {
-                        Text(entry.kindText).foregroundStyle(.secondary)
-                        TagDots(colors: FinderTag.dots(for: entry))
-                    }
+                    HStack(spacing: 6) { Text(entry.kindText).foregroundStyle(.secondary); TagDots(colors: FinderTag.dots(for: entry)) }
                 }
                 Spacer()
             }
             Divider()
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 7) {
-                if url == nil {
-                    infoRow("Kind", entry.kindText)
-                    if !entry.isDir { infoRow("Size", "\(formatBytes(Int64(size))) (\(size.formatted()) bytes)") }
-                    infoRow("Modified", entry.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .long, time: .standard) } ?? "—")
-                } else {
-                    ForEach(Array(info.rows.enumerated()), id: \.offset) { _, r in infoRow(r.0, r.1) }
-                    if entry.isDir {
-                        infoRow("Size", folderBytes.map { "\(formatBytes($0)) on disk" } ?? (computing ? "Calculating…" : "—"))
-                    }
-                }
-            }
+            ItemDetails(entry: entry, url: url)
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
         .padding(20).frame(width: 440)
-        .task {
-            guard let url else { return }
-            info = InfoLoader.load(url, entry: entry)
-            if entry.isDir {
-                computing = true
-                let b = await Task.detached(priority: .utility) { InfoLoader.folderSize(url) }.value
-                folderBytes = b; computing = false
-            }
+    }
+}
+
+/// The right-hand panel: a large preview and the details of the selection (or of the folder when nothing is selected).
+struct InspectorPane: View {
+    let selection: [Listing.Entry]
+    let url: (Listing.Entry) -> URL?
+    let folderName: String; let folderPath: String; let itemCount: Int; let filesystem: String
+    @State private var thumb: NSImage?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                if selection.count == 1, let e = selection.first { single(e) }
+                else if selection.count > 1 { multiple }
+                else { folder }
+            }.padding(16).frame(maxWidth: .infinity)
         }
     }
 
-    private func infoRow(_ k: String, _ v: String) -> some View {
-        GridRow {
-            Text(k).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-            Text(v).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    private func single(_ e: Listing.Entry) -> some View {
+        let u = url(e)
+        return VStack(spacing: 12) {
+            Group {
+                if let t = thumb { Image(nsImage: t).resizable().scaledToFit() }
+                else { Image(nsImage: FileIcons.icon(for: e, url: u)).resizable().scaledToFit() }
+            }
+            .frame(maxWidth: 220, maxHeight: 220).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+            .task(id: (u?.path ?? "") + e.name) {
+                thumb = nil
+                guard let u, !e.isDir else { return }
+                thumb = await Thumbnails.make(u, side: 256)
+            }
+            VStack(spacing: 4) {
+                Text(e.name).font(.headline).multilineTextAlignment(.center).textSelection(.enabled)
+                Text(e.isDir ? e.kindText : "\(e.kindText) · \(formatBytes(Int64(e.size)))").font(.callout).foregroundStyle(.secondary)
+                TagDots(colors: FinderTag.dots(for: e))
+            }
+            Divider()
+            ItemDetails(entry: e, url: u)
+        }
+    }
+
+    private var multiple: some View {
+        let files = selection.filter { !$0.isDir }
+        let bytes = files.reduce(Int64(0)) { $0 + Int64($1.size) }
+        return VStack(spacing: 10) {
+            ZStack {
+                ForEach(Array(selection.prefix(3).enumerated()), id: \.offset) { i, e in
+                    Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().scaledToFit().frame(width: 96, height: 96)
+                        .rotationEffect(.degrees(Double(i - 1) * 7)).offset(x: CGFloat(i - 1) * 10)
+                }
+            }.frame(height: 110)
+            Text("\(selection.count) items selected").font(.headline)
+            Text("\(selection.filter(\.isDir).count) folders · \(files.count) files" + (bytes > 0 ? " · \(formatBytes(bytes))" : ""))
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private var folder: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "folder.fill").resizable().scaledToFit().frame(width: 84, height: 84).foregroundStyle(.blue.gradient)
+            Text(folderName).font(.headline)
+            Text("\(itemCount) item\(itemCount == 1 ? "" : "s")").font(.callout).foregroundStyle(.secondary)
+            Divider()
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 7) {
+                GridRow { Text("Where").foregroundStyle(.secondary); Text(folderPath).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                GridRow { Text("Format").foregroundStyle(.secondary); Text(filesystem).frame(maxWidth: .infinity, alignment: .leading) }
+            }.font(.callout)
+            Text("Select an item to see its preview and details.").font(.caption).foregroundStyle(.tertiary).padding(.top, 6)
+        }
+    }
+}
+
+enum Thumbnails {
+    /// A Quick Look thumbnail (image preview, PDF page, video frame …); nil when the system has none.
+    static func make(_ url: URL, side: CGFloat) async -> NSImage? {
+        let req = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: side, height: side), scale: 2, representationTypes: .thumbnail)
+        return await withCheckedContinuation { cont in
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { rep, _ in cont.resume(returning: rep?.nsImage) }
         }
     }
 }
