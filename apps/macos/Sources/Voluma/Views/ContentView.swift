@@ -108,6 +108,7 @@ struct ContentView: View {
                     switch item {
                     case .section(let s): navigate(section: s)
                     case .place(let id): if let f = Favorite.all.first(where: { $0.id == id }) { navigate(section: .disks, browse: f.target) }
+                    case .location(let bsd): if let n = locations.first(where: { $0.bsd == bsd }) { browse(n) }
                     case nil: break
                     }
                 })) {
