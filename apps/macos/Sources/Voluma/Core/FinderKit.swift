@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import QuickLookUI
+import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 // MARK: - kinds
