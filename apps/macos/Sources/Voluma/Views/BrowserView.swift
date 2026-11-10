@@ -409,8 +409,8 @@ struct BrowserView: View {
 
     private func groupHeader(_ g: EntryGroup) -> some View {
         HStack(spacing: 6) {
-            Text(g.title).font(.headline)
-            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.secondary)
+            Text(g.title).font(.subheadline.weight(.semibold))
+            Text("\(g.entries.count)").font(.subheadline).foregroundStyle(.tertiary)
             Spacer()
         }.padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
     }
