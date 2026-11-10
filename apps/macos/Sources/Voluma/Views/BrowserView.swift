@@ -45,7 +45,6 @@ struct BrowserView: View {
     @AppStorage("voluma.viewMode") private var viewMode = ViewMode.list.rawValue
     @AppStorage("voluma.showHidden") private var showHidden = false
     @State private var filter = ""
-    @FocusState private var filterFocused: Bool
     @State private var dropTargeted = false
     // Writing into an IMAGE is OFF by default and per-window; every mutation is validated again in Rust.
     // Mounted volumes behave like Finder: copying in is allowed, deleting goes to the Trash.
