@@ -8,6 +8,23 @@ enum Section: String, CaseIterable, Identifiable {
     }
 }
 
+enum SidebarItem: Hashable { case section(Section), place(String) }
+
+/// Finder-style shortcuts to the folders you use every day, browsed natively with the full set of Finder actions.
+struct Favorite: Identifiable {
+    let id: String; let title: String; let icon: String; let path: String
+    var target: BrowseTarget { BrowseTarget(image: "", part: -1, title: "Macintosh HD", nativeRoot: "/", startPath: path) }
+    static let all: [Favorite] = {
+        let home = NSHomeDirectory()
+        let list: [(String, String, String)] = [
+            ("Home", "house", home), ("Desktop", "menubar.dock.rectangle", home + "/Desktop"), ("Documents", "doc", home + "/Documents"),
+            ("Downloads", "arrow.down.circle", home + "/Downloads"), ("Pictures", "photo", home + "/Pictures"),
+            ("Applications", "square.grid.2x2", "/Applications"),
+        ]
+        return list.filter { FileManager.default.fileExists(atPath: $0.2) }.map { Favorite(id: $0.0, title: $0.0, icon: $0.1, path: $0.2) }
+    }()
+}
+
 struct ContentView: View {
     /// Where the window is: a section, optionally with a browser open on top of it.
     struct Place: Equatable { var section: Section; var browse: BrowseTarget? }
@@ -40,8 +57,24 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(Section.allCases, selection: Binding<Section?>(get: { place.section }, set: { if let s = $0 { navigate(section: s) } })) { s in
-                Label(s.rawValue, systemImage: s.icon).tag(s)
+            List(selection: Binding<SidebarItem?>(
+                get: {
+                    if let b = place.browse, b.nativeRoot == "/", let f = Favorite.all.first(where: { $0.path == b.startPath }) { return .place(f.id) }
+                    return .section(place.section)
+                },
+                set: { item in
+                    switch item {
+                    case .section(let s): navigate(section: s)
+                    case .place(let id): if let f = Favorite.all.first(where: { $0.id == id }) { navigate(section: .disks, browse: f.target) }
+                    case nil: break
+                    }
+                })) {
+                SwiftUI.Section("Favorites") {
+                    ForEach(Favorite.all) { f in Label(f.title, systemImage: f.icon).tag(SidebarItem.place(f.id)) }
+                }
+                SwiftUI.Section("VOLUMA") {
+                    ForEach(Section.allCases) { s in Label(s.rawValue, systemImage: s.icon).tag(SidebarItem.section(s)) }
+                }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } detail: {
