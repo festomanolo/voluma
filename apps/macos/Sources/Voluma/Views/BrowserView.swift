@@ -371,7 +371,7 @@ struct BrowserView: View {
                     SwiftUI.Section {
                         ForEach(g.entries) { e in gridCell(e) }
                     } header: {
-                        if group != .none { groupHeader(g).background(.regularMaterial) }
+                        if group != .none { groupHeader(g).background(.bar) }
                     }
                 }
             }.padding(12)
