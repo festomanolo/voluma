@@ -8,7 +8,7 @@ enum Section: String, CaseIterable, Identifiable {
     }
 }
 
-enum SidebarItem: Hashable { case section(Section), place(String) }
+enum SidebarItem: Hashable { case section(Section), place(String), location(String) }
 
 /// Finder-style shortcuts to the folders you use every day, browsed natively with the full set of Finder actions.
 struct Favorite: Identifiable {
