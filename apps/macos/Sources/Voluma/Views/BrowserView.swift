@@ -98,12 +98,9 @@ struct BrowserView: View {
                 .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 3).padding(4).allowsHitTesting(false) } }
                 .dropDestination(for: URL.self) { urls, _ in dropURLs(urls) } isTargeted: { dropTargeted = $0 }
             Divider()
-            HStack(spacing: 8) {
-                if busy { ProgressView().controlSize(.small) }
-                Text(status ?? "\(sorted.count) items").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-            }.padding(.horizontal, 14).padding(.vertical, 5)
+            footer
         }
+        .background(shortcuts)
         .onAppear { load(); publishNav() }
         .onDisappear { if isHelper, let b = target.bsd { Task { _ = await NtfsSessions.shared.end(bsd: b) } } }
         .confirmationDialog("Enable writing to “\(target.title)”?", isPresented: $confirmNtfs, titleVisibility: .visible) {
@@ -112,7 +109,10 @@ struct BrowserView: View {
         } message: {
             Text("macOS can only read NTFS. VOLUMA will unmount the volume from macOS, ask for your administrator password, and write with its own NTFS driver. It refuses volumes that Windows left dirty or hibernated. The volume is remounted in macOS when you leave this window. Back up anything important first.")
         }
-        .onChange(of: backStack) { _ in publishNav() }
+        .onChange(of: backStack) { _, _ in publishNav() }
+        .onChange(of: sortOrder) { _, _ in recompute() }
+        .onChange(of: filter) { _, _ in recompute() }
+        .onChange(of: showHidden) { _, _ in recompute() }
         .confirmationDialog("Allow changes to this image?", isPresented: $confirmUnlock, titleVisibility: .visible) {
             Button("Allow Changes", role: .destructive) { writeUnlocked = true }
             Button("Keep Read-only", role: .cancel) {}
