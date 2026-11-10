@@ -225,7 +225,6 @@ struct BrowserView: View {
                     ForEach(FileTemplate.all) { t in Button(t.title, systemImage: t.symbol) { openNewFile(t) } }
                 } label: { Label("New File", systemImage: "doc.badge.plus") } primaryAction: { openNewFile(FileTemplate.all[1]) }
                 .help("New File (⌥⌘N)")
-                Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
             moreMenu
             Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
