@@ -229,9 +229,9 @@ struct BrowserView: View {
             moreMenu
             Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show or hide the details panel (⌥⌘I)")
-            TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 130).focused($filterFocused)
-                .onSubmit { filterFocused = false }
-            if !isNative && !isHelper {
+        }
+        if !isNative && !isHelper {
+            ToolbarItem {
                 Button {
                     if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
                 } label: {
