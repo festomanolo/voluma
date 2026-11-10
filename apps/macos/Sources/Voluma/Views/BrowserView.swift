@@ -221,6 +221,7 @@ struct BrowserView: View {
             Spacer(minLength: 8)
             if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
 
+            sortGroupMenu
             Picker("View", selection: $viewMode) {
                 Image(systemName: "list.bullet").tag(ViewMode.list.rawValue)
                 Image(systemName: "square.grid.2x2").tag(ViewMode.icons.rawValue)
