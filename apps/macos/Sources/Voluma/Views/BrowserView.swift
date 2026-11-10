@@ -304,6 +304,8 @@ struct BrowserView: View {
                 .contextMenu { if canWrite { backgroundMenu } }
         } else if mode == .icons {
             grid
+        } else if group != .none {
+            groupedList
         } else {
             table
         }
