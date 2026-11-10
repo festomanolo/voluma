@@ -137,6 +137,8 @@ struct BrowserView: View {
         .sheet(item: $infoEntry) { e in InfoSheet(entry: e, url: url(e), size: e.size) }
     }
 
+    // MARK: banners
+
     private var ntfsBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "lock.fill").foregroundStyle(.orange)
@@ -190,14 +192,19 @@ struct BrowserView: View {
     }
 
     // MARK: toolbar
+
     private var toolbarRow: some View {
         HStack(spacing: 6) {
-            Button { goBack() } label: { Image(systemName: "chevron.left") }.disabled(backStack.isEmpty).help("Previous folder")
-            Button { goForward() } label: { Image(systemName: "chevron.right") }.disabled(forwardStack.isEmpty).help("Next folder")
-            Button(target.title) { go("/") }.buttonStyle(.link)
-            ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
+            Button { goBack() } label: { Image(systemName: "chevron.left") }.disabled(backStack.isEmpty).help("Previous folder (⌘[)")
+            Button { goForward() } label: { Image(systemName: "chevron.right") }.disabled(forwardStack.isEmpty).help("Next folder (⌘])")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    Button(rootTitle) { go("/") }.buttonStyle(.link)
+                    ForEach(Array(crumbs.enumerated()), id: \.offset) { i, c in
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                        Button(c) { go("/" + crumbs[0...i].joined(separator: "/")) }.buttonStyle(.link)
+                    }
+                }
             }
             Spacer()
             if let l = listing { Text(l.filesystem).font(.caption).foregroundStyle(.secondary) }
