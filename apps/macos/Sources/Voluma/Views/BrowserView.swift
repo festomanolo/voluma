@@ -218,9 +218,16 @@ struct BrowserView: View {
             Button("Cut", systemImage: "scissors") { cutSelection() }.disabled(selection.isEmpty || !canMoveFromHere).help("Cut: the next paste moves the items (⌘X)")
             Button("Paste", systemImage: "doc.on.clipboard") { paste() }.disabled(!canWrite || busy).help(canWrite ? "Paste into this folder (⌘V)" : "Unlock writing to paste into this image")
             if canWrite {
-                Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }
+                Button("New Folder", systemImage: "folder.badge.plus") { newFolderName = ""; showNewFolder = true }.help("New Folder (⇧⌘N)")
+                Menu {
+                    ForEach(FileTemplate.all) { t in Button(t.title, systemImage: t.symbol) { openNewFile(t) } }
+                } label: { Label("New File", systemImage: "doc.badge.plus") } primaryAction: { openNewFile(FileTemplate.all[1]) }
+                .help("New File (⌥⌘N)")
                 Button("Import…", systemImage: "square.and.arrow.down") { importFiles() }
             }
+            moreMenu
+            TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(width: 130).focused($filterFocused)
+                .onSubmit { filterFocused = false }
             if !isNative && !isHelper {
                 Button {
                     if writeUnlocked { writeUnlocked = false } else { confirmUnlock = true }
@@ -232,6 +239,38 @@ struct BrowserView: View {
                 .help(listing?.write_blocked.map { "Can't write safely: \($0)" } ?? (driverWritable ? "Allow changes to this image" : "This filesystem driver is read-only"))
             }
         }.padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("Get Info", systemImage: "info.circle") { showInfo() }.disabled(selection.count != 1)
+            Button("Quick Look", systemImage: "eye") { quickLook() }.disabled(selection.isEmpty)
+            Divider()
+            Button("Duplicate", systemImage: "plus.square.on.square") { duplicate() }.disabled(selection.isEmpty || !canWrite)
+            Button("Make Alias", systemImage: "arrow.turn.up.right") { makeAlias() }.disabled(selection.isEmpty || !canWrite || !isNative)
+            Button("Compress", systemImage: "archivebox") { compress() }.disabled(selection.isEmpty || !canWrite || !isNative)
+            Button("Copy Path", systemImage: "link") { copyPath() }.disabled(selection.isEmpty)
+            Divider()
+            Toggle("Show Hidden Files", isOn: $showHidden)
+            Button("Select All", systemImage: "checkmark.circle") { selection = Set(rows.map(\.id)) }
+        } label: { Image(systemName: "ellipsis.circle") }
+        .menuIndicator(.hidden).frame(width: 30).help("More actions")
+    }
+
+    // MARK: content
+
+    @ViewBuilder private var content: some View {
+        if let error {
+            ContentUnavailableView("Can't read folder", systemImage: "exclamationmark.triangle", description: Text(error))
+        } else if listing != nil && rows.isEmpty {
+            ContentUnavailableView(filter.isEmpty ? "Empty folder" : "No matches", systemImage: filter.isEmpty ? "folder" : "magnifyingglass",
+                                   description: Text(filter.isEmpty && canWrite ? "Paste (⌘V) or drop files here." : ""))
+                .contextMenu { if canWrite { backgroundMenu } }
+        } else if mode == .icons {
+            grid
+        } else {
+            table
+        }
     }
 
     private var table: some View {
