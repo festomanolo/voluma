@@ -27,15 +27,23 @@ struct BrowserView: View {
     let target: BrowseTarget
     @EnvironmentObject var nav: NavState
 
-    @State private var path = "/"
+    @State private var path: String
     @State private var backStack: [String] = []
     @State private var forwardStack: [String] = []
     @State private var listing: Listing?
+    @State private var rows: [Listing.Entry] = []
     @State private var error: String?
     @State private var selection: Set<Listing.Entry.ID> = []
     @State private var sortOrder = [KeyPathComparator(\Listing.Entry.name)]
     @State private var status: String?
     @State private var busy = false
+    @State private var transfer: TransferProgress?
+    @State private var cutTick = 0
+    @AppStorage("voluma.viewMode") private var viewMode = ViewMode.list.rawValue
+    @AppStorage("voluma.showHidden") private var showHidden = false
+    @State private var filter = ""
+    @FocusState private var filterFocused: Bool
+    @State private var dropTargeted = false
     // Writing into an IMAGE is OFF by default and per-window; every mutation is validated again in Rust.
     // Mounted volumes behave like Finder: copying in is allowed, deleting goes to the Trash.
     @State private var writeUnlocked = false
