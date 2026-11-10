@@ -253,10 +253,7 @@ struct InfoSheet: View {
                 Image(nsImage: FileIcons.icon(for: entry, url: url)).resizable().frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.name).font(.title3.weight(.semibold)).lineLimit(2).textSelection(.enabled)
-                    HStack(spacing: 6) {
-                        Text(entry.kindText).foregroundStyle(.secondary)
-                        TagDots(colors: FinderTag.dots(for: entry))
-                    }
+                    HStack(spacing: 6) { Text(entry.kindText).foregroundStyle(.secondary); TagDots(colors: FinderTag.dots(for: entry)) }
                 }
                 Spacer()
             }
