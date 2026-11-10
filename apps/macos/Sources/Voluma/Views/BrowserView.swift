@@ -37,7 +37,7 @@ struct BrowserView: View {
     @AppStorage("voluma.inspector") private var showInspector = false
     @State private var error: String?
     @State private var selection: Set<Listing.Entry.ID> = []
-    @State private var sortOrder = [KeyPathComparator(\Listing.Entry.name)]
+    @State private var sortOrder = SortKey.name.comparators(ascending: true)
     @State private var status: String?
     @State private var busy = false
     @State private var transfer: TransferProgress?
