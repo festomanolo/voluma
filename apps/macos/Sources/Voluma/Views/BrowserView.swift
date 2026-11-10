@@ -274,11 +274,20 @@ struct BrowserView: View {
     }
 
     private var table: some View {
-        Table(sorted, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Name", value: \.name) { e in
-                Label(e.name, systemImage: e.isDir ? "folder.fill" : "doc")
-                    .foregroundStyle(e.hidden ? .secondary : .primary)
+                HStack(spacing: 7) {
+                    Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().interpolation(.high).frame(width: 18, height: 18)
+                    Text(e.name).lineLimit(1).foregroundStyle(e.hidden ? .secondary : .primary)
+                    TagDots(colors: FinderTag.dots(for: e))
+                }
+                .opacity(isCutRow(e) ? 0.4 : 1)
+                .modifier(DragOut(url: url(e)))
             }
+            TableColumn("Date Modified", value: \.modifiedSort) { e in
+                Text(e.modified.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "—")
+                    .foregroundStyle(.secondary)
+            }.width(min: 110, ideal: 150)
             TableColumn("Size", value: \.size) { e in
                 Text(e.isDir ? "—" : formatBytes(Int64(e.size))).foregroundStyle(.secondary)
             }.width(90)
