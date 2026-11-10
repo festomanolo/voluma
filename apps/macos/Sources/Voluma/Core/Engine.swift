@@ -62,6 +62,10 @@ struct Listing: Decodable {
     struct Entry: Decodable, Identifiable, Hashable {
         let name: String; let kind: String; let size: UInt64
         let modified: Int64?; let hidden: Bool
+        /// Filled in for mounted volumes only (the Rust engine does not send them).
+        var created: Int64? = nil
+        var tags: [String]? = nil
+        var label: Int? = nil
         var id: String { name }
         var isDir: Bool { kind == "directory" }
     }
