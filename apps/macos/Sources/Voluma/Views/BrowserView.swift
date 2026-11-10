@@ -119,6 +119,12 @@ struct BrowserView: View {
         .onChange(of: sortOrder) { _, _ in recompute() }
         .onChange(of: filter) { _, _ in recompute() }
         .onChange(of: showHidden) { _, _ in recompute() }
+        .onChange(of: groupBy) { _, _ in recompute() }
+        .inspector(isPresented: $showInspector) {
+            InspectorPane(selection: selected, url: { url($0) }, folderName: crumbs.last ?? rootTitle, folderPath: path,
+                          itemCount: rows.count, filesystem: listing?.filesystem ?? "—")
+                .inspectorColumnWidth(min: 240, ideal: 290, max: 420)
+        }
         .confirmationDialog("Allow changes to this image?", isPresented: $confirmUnlock, titleVisibility: .visible) {
             Button("Allow Changes", role: .destructive) { writeUnlocked = true }
             Button("Keep Read-only", role: .cancel) {}
