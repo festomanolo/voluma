@@ -554,7 +554,7 @@ struct BrowserView: View {
             Button("") { makeAlias() }.keyboardShortcut("a", modifiers: [.command, .control]).disabled(selection.isEmpty || !canWrite || !isNative)
             Button("") { goBack() }.keyboardShortcut("[", modifiers: .command).disabled(backStack.isEmpty)
             Button("") { goForward() }.keyboardShortcut("]", modifiers: .command).disabled(forwardStack.isEmpty)
-            if mode == .icons { Button("") { selection = Set(rows.map(\.id)) }.keyboardShortcut("a", modifiers: .command).disabled(filterFocused) }
+            if mode == .icons { Button("") { selection = Set(rows.map(\.id)) }.keyboardShortcut("a", modifiers: .command) }
         }
         .frame(width: 0, height: 0).opacity(0).allowsHitTesting(false)
     }
