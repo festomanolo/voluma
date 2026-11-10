@@ -61,7 +61,11 @@ struct ContentView: View {
                 get: {
                     if let b = place.browse, b.nativeRoot == "/", let f = Favorite.all.first(where: { $0.path == b.startPath }) { return .place(f.id) }
                     return .section(place.section)
-            List(Section.allCases, selection: Binding<Section?>(get: { place.section }, set: { if let s = $0 { navigate(section: s) } })) { s in
+                },
+                set: { item in
+                    switch item {
+                    case .section(let s): navigate(section: s)
+                    case .place(let id): if let f = Favorite.all.first(where: { $0.id == id }) { navigate(section: .disks, browse: f.target) }
                 Label(s.rawValue, systemImage: s.icon).tag(s)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
