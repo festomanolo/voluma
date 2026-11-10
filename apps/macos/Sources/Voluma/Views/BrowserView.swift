@@ -285,8 +285,8 @@ struct BrowserView: View {
                     Button { groupBy = g.rawValue } label: { if group == g { Label(g.rawValue, systemImage: "checkmark") } else { Text(g.rawValue) } }
                 }
             }
-        } label: { Label("Sort and Group", systemImage: "arrow.up.arrow.down.circle") }
-        .menuIndicator(.hidden).frame(width: 30).help("Sort By and Group By")
+        } label: { Label("Sort and Group", systemImage: "square.grid.3x1.below.line.grid.1x2") }
+        .help("Sort By and Group By")
     }
 
     private var moreMenu: some View {
