@@ -282,10 +282,56 @@ struct InspectorPane: View {
         }
     }
 
-    private func infoRow(_ k: String, _ v: String) -> some View {
-        GridRow {
-            Text(k).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-            Text(v).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    private func single(_ e: Listing.Entry) -> some View {
+        let u = url(e)
+        return VStack(spacing: 12) {
+            Group {
+                if let t = thumb { Image(nsImage: t).resizable().scaledToFit() }
+                else { Image(nsImage: FileIcons.icon(for: e, url: u)).resizable().scaledToFit() }
+            }
+            .frame(maxWidth: 220, maxHeight: 220).shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+            .task(id: (u?.path ?? "") + e.name) {
+                thumb = nil
+                guard let u, !e.isDir else { return }
+                thumb = await Thumbnails.make(u, side: 256)
+            }
+            VStack(spacing: 4) {
+                Text(e.name).font(.headline).multilineTextAlignment(.center).textSelection(.enabled)
+                Text(e.isDir ? e.kindText : "\(e.kindText) · \(formatBytes(Int64(e.size)))").font(.callout).foregroundStyle(.secondary)
+                TagDots(colors: FinderTag.dots(for: e))
+            }
+            Divider()
+            ItemDetails(entry: e, url: u)
+        }
+    }
+
+    private var multiple: some View {
+        let files = selection.filter { !$0.isDir }
+        let bytes = files.reduce(Int64(0)) { $0 + Int64($1.size) }
+        return VStack(spacing: 10) {
+            ZStack {
+                ForEach(Array(selection.prefix(3).enumerated()), id: \.offset) { i, e in
+                    Image(nsImage: FileIcons.icon(for: e, url: url(e))).resizable().scaledToFit().frame(width: 96, height: 96)
+                        .rotationEffect(.degrees(Double(i - 1) * 7)).offset(x: CGFloat(i - 1) * 10)
+                }
+            }.frame(height: 110)
+            Text("\(selection.count) items selected").font(.headline)
+            Text("\(selection.filter(\.isDir).count) folders · \(files.count) files" + (bytes > 0 ? " · \(formatBytes(bytes))" : ""))
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private var folder: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "folder.fill").resizable().scaledToFit().frame(width: 84, height: 84).foregroundStyle(.blue.gradient)
+            Text(folderName).font(.headline)
+            Text("\(itemCount) item\(itemCount == 1 ? "" : "s")").font(.callout).foregroundStyle(.secondary)
+            Divider()
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 7) {
+                GridRow { Text("Where").foregroundStyle(.secondary); Text(folderPath).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                GridRow { Text("Format").foregroundStyle(.secondary); Text(filesystem).frame(maxWidth: .infinity, alignment: .leading) }
+            }.font(.callout)
+            Text("Select an item to see its preview and details.").font(.caption).foregroundStyle(.tertiary).padding(.top, 6)
         }
     }
 }
