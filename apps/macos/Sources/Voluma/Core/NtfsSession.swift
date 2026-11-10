@@ -216,6 +216,7 @@ struct HelperBackend: FSBackend {
         _ = try session.callOK(["op": "import", "src": name, "path": path], as: Done.self)
     }
     func mkdir(_ path: String) throws { _ = try session.callOK(["op": "mkdir", "path": path], as: Done.self) }
+    func createFile(_ path: String, contents: Data) throws { try createViaImport(self, path, contents) }
     func delete(_ path: String) throws { _ = try session.callOK(["op": "delete", "path": path], as: Done.self) }
     func rename(_ a: String, _ b: String) throws { _ = try session.callOK(["op": "rename", "path": a, "to": b], as: Done.self) }
 }
