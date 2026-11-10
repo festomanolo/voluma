@@ -440,7 +440,7 @@ struct BrowserView: View {
                                 Text(e.isDir ? "—" : formatBytes(Int64(e.size))).frame(width: 80, alignment: .leading)
                                 Text(e.kindText).lineLimit(1).frame(width: 130, alignment: .leading)
                             }
-                            .foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
+                            .font(.callout).foregroundStyle(.secondary).opacity(isCutRow(e) ? 0.4 : 1)
                             .tag(e.id).modifier(DragOut(url: url(e)))
                         }
                     } header: { groupHeader(g) }
